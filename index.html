@@ -1,0 +1,229 @@
+<!DOCTYPE html>
+<html lang="en" data-bs-theme="light">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Prediction Market Analyzer - AI-Powered Insights</title>
+  <meta name="description"
+    content="Analyze prediction markets from Metaculus and Manifold Markets with AI-powered insights and context-specific feeds">
+  <link rel="icon" type="image/svg+xml"
+    href="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAzMiAzMiI+PGNpcmNsZSBjeD0iMTYiIGN5PSIxNiIgcj0iMTUiIGZpbGw9IiMyNTYzZWIiLz48cGF0aCBmaWxsPSIjZmZmIiBkPSJtMTYgNyAyIDcgNyAyLTcgMi0yIDctMi03LTctMiA3LTJaIi8+PC9zdmc+">
+
+  <!-- Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+
+  <!-- Styles -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
+  <link rel="stylesheet" href="styles.css">
+</head>
+
+<body>
+  <!-- Navigation -->
+  <nav class="navbar navbar-expand-lg" data-bs-theme="dark">
+    <div class="container-fluid">
+      <a class="navbar-brand" href="#">
+        <i class="bi bi-graph-up-arrow me-2"></i>Market Analyzer
+      </a>
+      <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarContent">
+        <span class="navbar-toggler-icon"></span>
+      </button>
+      <div class="collapse navbar-collapse" id="navbarContent">
+        <ul class="navbar-nav me-auto">
+          <li class="nav-item">
+            <a class="nav-link active" href="#feed-section">
+              <i class="bi bi-rss-fill me-1"></i>Feed
+            </a>
+          </li>
+          <li class="nav-item">
+            <a class="nav-link" href="#insights-section">
+              <i class="bi bi-lightbulb-fill me-1"></i>Insights
+            </a>
+          </li>
+          <li class="nav-item">
+            <a class="nav-link" href="#stats-section">
+              <i class="bi bi-bar-chart-fill me-1"></i>Stats
+            </a>
+          </li>
+        </ul>
+        <button class="btn btn-sm btn-outline-primary me-2" data-bs-toggle="modal" data-bs-target="#llmConfigModal">
+          <i class="bi bi-robot me-1"></i>Configure LLM
+        </button>
+        <div class="nav-item dropdown" role="group">
+          <button class="dark-theme-toggle btn btn-outline-light dropdown-toggle" type="button"
+            data-bs-toggle="dropdown">
+            <i class="bi bi-circle-half"></i>
+          </button>
+          <ul class="dropdown-menu dropdown-menu-end">
+            <li><button class="dropdown-item" data-bs-theme-value="light"><i
+                  class="bi bi-sun-fill me-2"></i>Light</button></li>
+            <li><button class="dropdown-item" data-bs-theme-value="dark"><i
+                  class="bi bi-moon-stars-fill me-2"></i>Dark</button></li>
+            <li><button class="dropdown-item" data-bs-theme-value="auto"><i
+                  class="bi bi-circle-half me-2"></i>Auto</button></li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </nav>
+
+  <!-- Hero Section -->
+  <div class="hero-section">
+    <div class="container">
+      <h1 class="hero-title">Prediction Market Intelligence</h1>
+      <p class="hero-subtitle">
+        Harness AI-powered analytics to discover trends, patterns, and insights from
+        Metaculus and Manifold Markets prediction feeds
+      </p>
+    </div>
+  </div>
+
+  <div class="container">
+    <!-- Control Panel -->
+    <div class="row mb-4">
+      <div class="col-lg-8 mx-auto">
+        <div class="glass-card">
+          <div class="card-body p-4">
+            <h5 class="mb-3"><i class="bi bi-sliders me-2"></i>Feed Configuration</h5>
+
+            <!-- Source Selection -->
+            <div class="mb-3">
+              <label class="form-label fw-semibold">Data Source</label>
+              <div class="btn-group w-100" role="group">
+                <input type="radio" class="btn-check" name="source" id="source-manifold" value="manifold" checked>
+                <label class="btn btn-outline-primary" for="source-manifold">
+                  <i class="bi bi-currency-dollar me-2"></i>Manifold Markets
+                </label>
+                <input type="radio" class="btn-check" name="source" id="source-metaculus" value="metaculus">
+                <label class="btn btn-outline-success" for="source-metaculus">
+                  <i class="bi bi-graph-up me-2"></i>Metaculus
+                </label>
+              </div>
+            </div>
+
+            <!-- Search -->
+            <div class="mb-3">
+              <label for="query-input" class="form-label fw-semibold">
+                <i class="bi bi-search me-1"></i>Search Query
+              </label>
+              <input type="text" class="form-control" id="query-input" placeholder="Search markets by keyword...">
+            </div>
+
+            <!-- Category Filters -->
+            <div class="mb-3">
+              <label class="form-label fw-semibold">
+                <i class="bi bi-tags-fill me-1"></i>Filter by Category
+              </label>
+              <div id="category-filters" class="d-flex flex-wrap gap-2">
+                <!-- Category chips will be inserted here -->
+              </div>
+            </div>
+
+            <!-- Action Buttons -->
+            <div class="d-flex gap-2">
+              <button class="btn btn-gradient flex-grow-1" id="btn-fetch">
+                <i class="bi bi-download me-2"></i>Fetch Markets
+              </button>
+              <button class="btn btn-outline-primary" id="btn-export-feed" title="Export Feed">
+                <i class="bi bi-download"></i>
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Stats Dashboard -->
+    <div id="stats-section" class="mb-4">
+      <div id="stats-container" class="row g-3">
+        <!-- Stats cards will be inserted here -->
+      </div>
+    </div>
+
+    <!-- Loading Indicator -->
+    <div id="loading" class="d-none">
+      <div class="loading-container">
+        <div class="loading-spinner"></div>
+        <p class="loading-text">Fetching market data...</p>
+      </div>
+    </div>
+
+    <!-- Insights Section -->
+    <div id="insights-section" class="d-none mb-4">
+      <div class="card insight-card glass-card">
+        <div class="card-body p-4">
+          <div id="insights-content">
+            <h4 class="mb-3"><i class="bi bi-lightbulb-fill me-2"></i>AI-Generated Insights</h4>
+            <p class="mb-0">Click "Generate Insights" to analyze the current feed...</p>
+          </div>
+          <button class="btn btn-light mt-3" id="btn-generate-insights">
+            <i class="bi bi-stars me-2"></i>Generate Insights
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Markets Feed -->
+    <div id="feed-section" class="mb-5">
+      <div id="markets-container" class="row g-4">
+        <!-- Market cards will be inserted here -->
+      </div>
+    </div>
+  </div>
+
+  <!-- LLM Configuration Modal -->
+  <div class="modal fade" id="llmConfigModal" tabindex="-1">
+    <div class="modal-dialog">
+      <div class="modal-content glass-card border-0">
+        <div class="modal-header border-0">
+          <h5 class="modal-title"><i class="bi bi-robot me-2"></i>Configure AI Assistant</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+        </div>
+        <div class="modal-body">
+          <form id="llm-config-form">
+            <div class="mb-3">
+              <label class="form-label fw-semibold">API Base URL</label>
+              <input type="text" class="form-control" id="llm-base-url" placeholder="https://api.openai.com/v1"
+                required>
+              <div class="form-text">Endpoint for chat completions (e.g. OpenAI, OpenRouter, LocalAI)</div>
+            </div>
+            <div class="mb-3">
+              <label class="form-label fw-semibold">Model Name</label>
+              <input type="text" class="form-control" id="llm-model" placeholder="gpt-4o-mini" required>
+            </div>
+            <div class="mb-3">
+              <label class="form-label fw-semibold">API Key</label>
+              <input type="password" class="form-control" id="llm-api-key" placeholder="sk-..." required>
+            </div>
+          </form>
+        </div>
+        <div class="modal-footer border-0">
+          <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+          <button type="button" class="btn btn-primary btn-gradient" id="btn-save-llm-config">Save
+            Configuration</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Footer -->
+  <footer class="text-center py-4 mt-5">
+    <div class="container">
+      <p class="text-muted mb-0">
+        <i class="bi bi-code-slash"></i> Built with AI-powered analytics |
+        Data from <a href="https://manifold.markets" target="_blank">Manifold Markets</a> &
+        <a href="https://metaculus.com" target="_blank">Metaculus</a>
+      </p>
+    </div>
+  </footer>
+
+  <!-- Scripts -->
+  <script src="https://cdn.jsdelivr.net/npm/@gramex/ui@0.3.1/dist/dark-theme.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+  <script src="app.js"></script>
+</body>
+
+</html>

@@ -57,55 +57,158 @@ class MarketAnalyzer {
     }
 
     loadLLMConfigUI() {
+        // Load Base URL and API Key into Modal Inputs
         const urlInput = document.getElementById('llm-base-url');
-        const modelInput = document.getElementById('llm-model');
         const keyInput = document.getElementById('llm-api-key');
 
-        if (urlInput) urlInput.value = this.llmConfig.baseUrl;
-        if (modelInput) modelInput.value = this.llmConfig.model;
+        if (urlInput) urlInput.value = this.llmConfig.baseUrl || 'https://api.openai.com/v1';
         if (keyInput) keyInput.value = this.llmConfig.apiKey;
+
+        // Load Model into Inline Input
+        const modelInput = document.getElementById('model-select');
+        if (modelInput) modelInput.value = this.llmConfig.model || 'gpt-4o-mini';
     }
 
     saveLLMConfig() {
         const url = document.getElementById('llm-base-url').value.trim();
-        const model = document.getElementById('llm-model').value.trim();
         const key = document.getElementById('llm-api-key').value.trim();
 
-        if (!url || !model || !key) {
-            alert('Please fill in all fields');
+        // Note: Model is now read directly from the inline input during generation,
+        // but we save the modal values (URL/Key) here.
+        // We also update the local config with value from the inline input just to be safe.
+        const model = document.getElementById('model-select')?.value.trim() || 'gpt-4o-mini';
+
+        if (!url || !key) {
+            this.showAlert('Please fill in Base URL and API Key', 'danger');
             return;
         }
 
         localStorage.setItem('llm_base_url', url);
-        localStorage.setItem('llm_model', model);
         localStorage.setItem('llm_api_key', key);
+        localStorage.setItem('llm_model', model);
 
         this.llmConfig = { baseUrl: url, model: model, apiKey: key };
 
-        // Hide modal (Bootstrap 5 vanilla JS way)
+        // Hide modal
         const modalEl = document.getElementById('llmConfigModal');
         const modal = bootstrap.Modal.getInstance(modalEl);
         if (modal) modal.hide();
 
-        // Show success
-        alert('Configuration saved! You can now generate AI insights.');
+        this.showAlert('API Configuration Saved!', 'success');
+    }
+
+    showAlert(message, type = 'success') {
+        const container = document.getElementById('alert-container');
+        if (!container) return;
+
+        const alertId = 'alert-' + Date.now();
+        const icon = type === 'success' ? 'check-circle-fill' : 'exclamation-triangle-fill';
+
+        const html = `
+            <div id="${alertId}" class="toast align-items-center text-bg-${type} border-0 show" role="alert" aria-live="assertive" aria-atomic="true">
+                <div class="d-flex">
+                    <div class="toast-body">
+                        <i class="bi bi-${icon} me-2"></i>${message}
+                    </div>
+                    <button type="button" class="btn-close btn-close-white me-2 m-auto" data-bs-dismiss="toast" aria-label="Close"></button>
+                </div>
+            </div>
+        `;
+
+        container.insertAdjacentHTML('beforeend', html);
+
+        // Auto remove after 3 seconds
+        setTimeout(() => {
+            const el = document.getElementById(alertId);
+            if (el) {
+                el.classList.remove('show');
+                setTimeout(() => el.remove(), 150); // Wait for fade out
+            }
+        }, 3000);
+    }
+
+    // Updated Generate Function
+    async generateLLMInsights(markets) {
+        // Get dynamic values from UI
+        const systemPrompt = document.getElementById('system-prompt').value;
+        const currentModel = document.getElementById('model-select').value;
+
+        // User Prompt with Data
+        const userPrompt = `
+        Here is the current market data:
+        ${JSON.stringify(markets)}
+        
+        Please provide the insights as requested in the JSON format.
+        `;
+
+        const response = await fetch(`${this.llmConfig.baseUrl}/chat/completions`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${this.llmConfig.apiKey}`
+            },
+            body: JSON.stringify({
+                model: currentModel || this.llmConfig.model, // Prefer UI value
+                messages: [
+                    { role: 'system', content: systemPrompt },
+                    { role: 'user', content: userPrompt }
+                ],
+                temperature: 0.7
+            })
+        });
+
+        if (!response.ok) {
+            const err = await response.text();
+            throw new Error(`LLM Error: ${err}`);
+        }
+
+        const data = await response.json();
+        const content = data.choices?.[0]?.message?.content;
+
+        if (!content) throw new Error('Invalid response from LLM');
+
+        // Extract JSON
+        const jsonMatch = content.match(/```json\n([\s\S]*?)\n```/) || content.match(/\[[\s\S]*\]/);
+        const jsonStr = jsonMatch ? jsonMatch[1] || jsonMatch[0] : content;
+
+        try {
+            return JSON.parse(jsonStr);
+        } catch (e) {
+            console.error('Failed to parse LLM Response:', content);
+            throw new Error('LLM returned invalid JSON');
+        }
     }
 
     renderCategoryFilters() {
         const container = document.getElementById('category-filters');
         if (!container) return;
 
-        container.innerHTML = this.categories.map(category => `
-      <div class="filter-chip" data-category="${category}">
-        ${this.getCategoryIcon(category)} ${category}
-      </div>
-    `).join('');
+        // Render categories as "Demo Card" style templates
+        container.innerHTML = this.categories.map((category, index) => `
+            <div class="col-md-6 col-lg-3">
+                <div class="card h-100 demo-card" style="cursor: pointer;" data-category="${category}">
+                    <div class="card-body">
+                        <h6 class="card-title">${this.getCategoryIcon(category)} ${category}</h6>
+                        <p class="card-text small text-muted">View trending prediction markets related to ${category.toLowerCase()}.</p>
+                    </div>
+                </div>
+            </div>
+        `).join('');
 
-        container.querySelectorAll('.filter-chip').forEach(chip => {
-            chip.addEventListener('click', (e) => {
+        container.querySelectorAll('.demo-card').forEach(card => {
+            card.addEventListener('click', (e) => {
                 const category = e.currentTarget.dataset.category;
-                this.toggleCategory(category);
-                e.currentTarget.classList.toggle('active');
+
+                // Toggle active class visually
+                if (this.selectedCategories.has(category)) {
+                    this.selectedCategories.delete(category);
+                    e.currentTarget.classList.remove('active', 'border-primary');
+                } else {
+                    this.selectedCategories.add(category);
+                    e.currentTarget.classList.add('active', 'border-primary');
+                }
+
+                this.filterMarkets();
             });
         });
     }
@@ -124,6 +227,7 @@ class MarketAnalyzer {
     }
 
     toggleCategory(category) {
+        // Redundant with new click handler but kept for logic structure if needed
         if (this.selectedCategories.has(category)) {
             this.selectedCategories.delete(category);
         } else {
@@ -160,6 +264,8 @@ class MarketAnalyzer {
             this.showLoading(false);
         }
     }
+
+    // Skip fetch functions as they are logic only...
 
     async fetchManifoldMarkets(query) {
         const term = query || '';
@@ -297,6 +403,7 @@ class MarketAnalyzer {
     }
 
     extractTags(text) {
+        // ... (unchanged)
         const tags = [];
         const lowerText = text.toLowerCase();
 
@@ -306,6 +413,7 @@ class MarketAnalyzer {
             }
         });
 
+        // Simplified keywords for brevity in this replacement block, but logic remains
         const keywords = {
             'AI': ['artificial intelligence', 'machine learning', 'gpt', 'chatgpt', 'ai', 'llm'],
             'Politics': ['election', 'president', 'congress', 'senate', 'political', 'vote'],
@@ -326,6 +434,7 @@ class MarketAnalyzer {
     }
 
     filterMarkets(searchQuery = '') {
+        // ... (Logic unchanged, re-included to maintain block)
         this.filteredMarkets = this.currentMarkets.filter(market => {
             const matchesSearch = !searchQuery ||
                 market.question.toLowerCase().includes(searchQuery.toLowerCase());
@@ -341,19 +450,16 @@ class MarketAnalyzer {
         this.displayStats();
     }
 
+    // ... calculateStats and displayStats match logic/structure
+
     calculateStats() {
+        // ... unchanged logic
         const markets = this.filteredMarkets;
-
         this.stats.totalMarkets = markets.length;
-
         if (markets.length > 0) {
             const totalProb = markets.reduce((sum, m) => sum + m.probability, 0);
             this.stats.avgProbability = totalProb / markets.length;
-
-            this.stats.highConfidence = markets.filter(m =>
-                m.probability > 0.7 || m.probability < 0.3
-            ).length;
-
+            this.stats.highConfidence = markets.filter(m => m.probability > 0.7 || m.probability < 0.3).length;
             const avgParticipants = markets.reduce((sum, m) => sum + m.participants, 0) / markets.length;
             this.stats.trending = markets.filter(m => m.participants > avgParticipants).length;
         }
@@ -365,27 +471,27 @@ class MarketAnalyzer {
 
         statsContainer.innerHTML = `
       <div class="col-md-3">
-        <div class="stat-card fade-in">
-          <div class="stat-value">${this.stats.totalMarkets}</div>
-          <div class="stat-label">Total Markets</div>
+        <div class="card h-100 text-center p-3 border-light-subtle">
+          <div class="h2 mb-0 text-primary">${this.stats.totalMarkets}</div>
+          <small class="text-muted text-uppercase">Total Markets</small>
         </div>
       </div>
       <div class="col-md-3">
-        <div class="stat-card fade-in" style="animation-delay: 0.1s">
-          <div class="stat-value">${Math.round(this.stats.avgProbability * 100)}%</div>
-          <div class="stat-label">Avg Probability</div>
+        <div class="card h-100 text-center p-3 border-light-subtle">
+          <div class="h2 mb-0 text-info">${Math.round(this.stats.avgProbability * 100)}%</div>
+          <small class="text-muted text-uppercase">Avg Probability</small>
         </div>
       </div>
       <div class="col-md-3">
-        <div class="stat-card fade-in" style="animation-delay: 0.2s">
-          <div class="stat-value">${this.stats.highConfidence}</div>
-          <div class="stat-label">High Confidence</div>
+        <div class="card h-100 text-center p-3 border-light-subtle">
+          <div class="h2 mb-0 text-success">${this.stats.highConfidence}</div>
+          <small class="text-muted text-uppercase">High Confidence</small>
         </div>
       </div>
       <div class="col-md-3">
-        <div class="stat-card fade-in" style="animation-delay: 0.3s">
-          <div class="stat-value">${this.stats.trending}</div>
-          <div class="stat-label">Trending</div>
+        <div class="card h-100 text-center p-3 border-light-subtle">
+          <div class="h2 mb-0 text-warning">${this.stats.trending}</div>
+          <small class="text-muted text-uppercase">Trending</small>
         </div>
       </div>
     `;
@@ -398,7 +504,7 @@ class MarketAnalyzer {
         if (this.filteredMarkets.length === 0) {
             container.innerHTML = `
         <div class="col-12">
-          <div class="alert alert-info">
+          <div class="alert alert-info border-0 bg-info-subtle text-info-emphasis">
             No markets found. Try adjusting your filters or search query.
           </div>
         </div>
@@ -413,47 +519,31 @@ class MarketAnalyzer {
 
     createMarketCard(market, index) {
         const prob = Math.round(market.probability * 100);
-        const probClass = prob > 70 ? 'probability-high' : prob < 30 ? 'probability-low' : '';
-        const sourceColor = market.source === 'manifold' ? 'primary' : 'success';
-        const sourceIcon = market.source === 'manifold' ? 'currency-dollar' : 'graph-up';
+        let probBadgeClass = 'prob-mid';
+        if (prob > 70) probBadgeClass = 'prob-high';
+        if (prob < 30) probBadgeClass = 'prob-low';
 
-        const tagsHtml = market.tags.slice(0, 3).map(tag =>
-            `<span class="market-tag">${tag}</span>`
-        ).join('');
+        const sourceBadge = market.source === 'manifold'
+            ? '<span class="badge bg-primary-subtle text-primary-emphasis border border-primary-subtle">Manifold</span>'
+            : '<span class="badge bg-success-subtle text-success-emphasis border border-success-subtle">Metaculus</span>';
 
-        const volumeDisplay = market.source === 'manifold'
-            ? `$${Math.round(market.volume).toLocaleString()}`
-            : 'N/A';
+        // Format Date
+        const dateStr = new Date(market.createdTime).toLocaleDateString();
 
         return `
-      <div class="col-md-6 col-lg-4 fade-in" style="animation-delay: ${index * 0.05}s">
-        <div class="card glass-card market-card h-100">
+      <div class="col-md-6 col-lg-4">
+        <div class="card h-100 demo-card">
           <div class="card-body">
             <div class="d-flex justify-content-between align-items-start mb-2">
-              <span class="badge bg-${sourceColor}">
-                <i class="bi bi-${sourceIcon}"></i> ${market.source}
-              </span>
-              ${market.isResolved ? '<span class="badge bg-secondary">Resolved</span>' : ''}
+              ${sourceBadge}
+              <span class="badg prob-badge ${probBadgeClass}">${prob}%</span>
             </div>
             
-            <h6 class="card-title mb-3">${market.question}</h6>
+            <h6 class="card-title mb-3"><a href="${market.url}" target="_blank" class="text-decoration-none text-reset stretched-link">${market.question}</a></h6>
             
-            <div class="d-flex justify-content-between align-items-center mb-3">
-              <span class="probability-badge ${probClass}">${prob}%</span>
-              <div class="text-end">
-                <small class="text-muted d-block">Volume: ${volumeDisplay}</small>
-                <small class="text-muted">
-                  <i class="bi bi-people-fill"></i> ${market.participants}
-                </small>
-              </div>
-            </div>
-            
-            ${tagsHtml ? `<div class="mb-3">${tagsHtml}</div>` : ''}
-            
-            <div class="d-flex gap-2">
-              <a href="${market.url}" target="_blank" class="btn btn-sm btn-outline-${sourceColor} flex-grow-1">
-                View Market <i class="bi bi-box-arrow-up-right"></i>
-              </a>
+            <div class="d-flex justify-content-between align-items-center text-muted small">
+                <span><i class="bi bi-people me-1"></i> ${market.participants}</span>
+                <span><i class="bi bi-calendar me-1"></i> ${dateStr}</span>
             </div>
           </div>
         </div>
@@ -466,6 +556,12 @@ class MarketAnalyzer {
         const btn = document.getElementById('btn-generate-insights');
 
         if (!insightsContent || !btn) return;
+
+        // Validation: Need markets first
+        if (this.filteredMarkets.length === 0) {
+            this.showAlert('Please fetch some markets first!', 'warning');
+            return;
+        }
 
         btn.disabled = true;
         btn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Analyzing...';
@@ -487,47 +583,54 @@ class MarketAnalyzer {
                 insights = this.generateLocalInsights(marketSummary); // OLD fallback
             }
 
+            // Render Results as Cards
             insightsContent.innerHTML = `
-        <div class="insight-content">
-          <h5 class="mb-3"><i class="bi bi-lightbulb-fill me-2"></i>${this.llmConfig.apiKey ? 'AI Analyst Report' : 'Basic Insights'}</h5>
-          ${insights.map(insight => `
-            <div class="mb-3">
-              <h6><i class="bi bi-arrow-right-circle-fill me-2"></i>${insight.title}</h6>
-              <p class="mb-0">${insight.description}</p>
-            </div>
-          `).join('')}
-          ${!this.llmConfig.apiKey ? '<div class="alert alert-info mt-3"><small>Tip: Configure LLM for deeper analysis.</small></div>' : ''}
-        </div>
-      `;
+                <div class="row g-3">
+                    ${insights.map(insight => `
+                    <div class="col-md-6 fade-in">
+                        <div class="card h-100 bg-body-tertiary border-0 shadow-sm">
+                            <div class="card-body">
+                                <h6 class="card-title text-primary"><i class="bi bi-lightbulb-fill me-2"></i>${insight.title}</h6>
+                                <p class="card-text small">${insight.description}</p>
+                            </div>
+                        </div>
+                    </div>
+                    `).join('')}
+                </div>
+                ${!this.llmConfig.apiKey ? '<div class="alert alert-info mt-3"><small><i class="bi bi-info-circle me-1"></i> Running in basic mode. Configure LLM for deep semantic analysis.</small></div>' : ''}
+            `;
+
+            this.showAlert('Analysis Complete!', 'success');
+
         } catch (error) {
             insightsContent.innerHTML = `
-        <div class="alert alert-warning">
-          Could not generate insights: ${error.message}
-        </div>
-      `;
+                <div class="alert alert-warning">
+                  <i class="bi bi-exclamation-octagon me-2"></i>Could not generate insights: ${error.message}
+                </div>
+            `;
+            this.showAlert('Analysis Failed', 'danger');
         } finally {
             btn.disabled = false;
-            btn.innerHTML = '<i class="bi bi-stars me-2"></i>Regenerate Insights';
+            btn.innerHTML = '<i class="bi bi-cpu-fill me-1"></i> Re-Run Analysis';
         }
     }
 
     // NEW FUNCTION: Chat with LLM
     async generateLLMInsights(markets) {
-        const prompt = `
-        You are an elite Prediction Market Analyst. 
-        Analyze the following prediction markets and identify 3-5 unique, high-value insights.
-        Focus on:
-        1. Unexpected correlations
-        2. Geopolitical risks vs Financial optimism
-        3. Emerging narratives
+        // Get dynamic values from UI
+        const systemPrompt = document.getElementById('system-prompt')?.value || 'You are an expert analyst.';
+        const currentModel = document.getElementById('model-select')?.value;
 
-        Markets data:
-        ${JSON.stringify(markets)}
-
-        Return ONLY a raw JSON array:
-        [
-            {"title": "Insight Title", "description": "Detailed explanation..."}
-        ]
+        // User Prompt with Data
+        const userPrompt = `
+        Analyze these prediction markets and return 4 high-value insights.
+        
+        Data: ${JSON.stringify(markets)}
+        
+        REQUIREMENTS:
+        - Return ONLY raw JSON array.
+        - Fields: "title" (short punchy header), "description" (2-3 sentences).
+        - Focus on: Contrarian signals, Risk assessment, and Thematic clusters.
         `;
 
         const response = await fetch(`${this.llmConfig.baseUrl}/chat/completions`, {
@@ -537,8 +640,11 @@ class MarketAnalyzer {
                 'Authorization': `Bearer ${this.llmConfig.apiKey}`
             },
             body: JSON.stringify({
-                model: this.llmConfig.model,
-                messages: [{ role: 'user', content: prompt }],
+                model: currentModel || this.llmConfig.model,
+                messages: [
+                    { role: 'system', content: systemPrompt },
+                    { role: 'user', content: userPrompt }
+                ],
                 temperature: 0.7
             })
         });
@@ -549,12 +655,11 @@ class MarketAnalyzer {
         }
 
         const data = await response.json();
-        // Handle different API response structures (OpenAI standard)
         const content = data.choices?.[0]?.message?.content;
 
         if (!content) throw new Error('Invalid response from LLM');
 
-        // Extract JSON from markdown code blocks if present
+        // Extract JSON
         const jsonMatch = content.match(/```json\n([\s\S]*?)\n```/) || content.match(/\[[\s\S]*\]/);
         const jsonStr = jsonMatch ? jsonMatch[1] || jsonMatch[0] : content;
 
@@ -582,8 +687,8 @@ class MarketAnalyzer {
 
         if (topCategory) {
             insights.push({
-                title: 'Most Popular Category',
-                description: `${topCategory[0]} is the most discussed topic with ${topCategory[1]} markets. This suggests high interest and activity in this domain.`
+                title: 'Market Focus: ' + topCategory[0],
+                description: `${topCategory[0]} is the dominant theme with ${topCategory[1]} active markets. Traders are heavily focused on this sector right now.`
             });
         }
 
@@ -591,8 +696,8 @@ class MarketAnalyzer {
         const highConfidence = markets.filter(m => m.probability > 70 || m.probability < 30);
         if (highConfidence.length > 0) {
             insights.push({
-                title: 'High Confidence Predictions',
-                description: `${highConfidence.length} markets show strong consensus (>70% or <30% probability), indicating clear market sentiment on these questions.`
+                title: 'Consensus Signals',
+                description: `${highConfidence.length} markets show strong crowd consensus (>70% or <30%). These represent "settled" narratives in the eyes of the market.`
             });
         }
 
@@ -602,16 +707,16 @@ class MarketAnalyzer {
 
         if (highParticipation.length > 0) {
             insights.push({
-                title: 'Trending Markets',
-                description: `${highParticipation.length} markets have significantly higher participation than average, suggesting these are hot topics attracting attention.`
+                title: 'Hot Topics',
+                description: `${highParticipation.length} viral markets are seeing >50% above-average participation. The crowd is flocking to these specific questions.`
             });
         }
 
         // Probability distribution
         const avgProb = markets.reduce((sum, m) => sum + m.probability, 0) / markets.length;
         insights.push({
-            title: 'Market Sentiment',
-            description: `Average probability across all markets is ${Math.round(avgProb * 100)}%, ${avgProb > 0.5 ? 'indicating general optimism' : 'suggesting cautious outlook'} in the prediction community.`
+            title: 'Global Sentiment',
+            description: `The aggregate probability across all visible markets is ${Math.round(avgProb * 100)}%. This indicates a ${avgProb > 0.5 ? 'bullish/optimistic' : 'bearish/cautious'} bias in the current feed.`
         });
 
         // Controversial markets (close to 50%)
@@ -623,7 +728,7 @@ class MarketAnalyzer {
             });
         }
 
-        return insights.slice(0, 5);
+        return insights;
     }
 
     exportFeed() {

@@ -66,7 +66,7 @@ class MarketAnalyzer {
 
         // Load Model into Inline Input
         const modelInput = document.getElementById('model-select');
-        if (modelInput) modelInput.value = this.llmConfig.model || 'gpt-4o-mini';
+        if (modelInput) modelInput.value = this.llmConfig.model || 'gpt-5-nano';
     }
 
     saveLLMConfig() {
@@ -76,7 +76,7 @@ class MarketAnalyzer {
         // Note: Model is now read directly from the inline input during generation,
         // but we save the modal values (URL/Key) here.
         // We also update the local config with value from the inline input just to be safe.
-        const model = document.getElementById('model-select')?.value.trim() || 'gpt-4o-mini';
+        const model = document.getElementById('model-select')?.value.trim() || 'gpt-5-nano';
 
         if (!url || !key) {
             this.showAlert('Please fill in Base URL and API Key', 'danger');
@@ -240,6 +240,40 @@ class MarketAnalyzer {
         const source = document.querySelector('input[name="source"]:checked')?.value || 'manifold';
         const query = document.getElementById('query-input')?.value || '';
 
+        // Clear State & UI immediately to avoid showing stale data while loading
+        this.currentMarkets = [];
+        this.filteredMarkets = [];
+
+        const marketsContainer = document.getElementById('markets-container');
+        if (marketsContainer) marketsContainer.innerHTML = '';
+
+        const insightsContent = document.getElementById('insights-content');
+        if (insightsContent) {
+            insightsContent.innerHTML = `
+                <div class="text-center py-5 text-muted fade-in">
+                  <i class="bi bi-hourglass-split display-1 mb-3 d-block opacity-25"></i>
+                  <h4 class="fw-light">Updating Data...</h4>
+                  <p>Fetching fresh market data for analysis.</p>
+                </div>
+            `;
+        }
+
+        const statsContainer = document.getElementById('stats-container');
+        if (statsContainer) {
+            statsContainer.innerHTML = Array(4).fill(0).map(() => `
+                <div class="col-md-3">
+                    <div class="card h-100 text-center p-3 border-light-subtle">
+                        <div class="h2 mb-0 placeholder-glow">
+                            <span class="placeholder col-4 text-secondary"></span>
+                        </div>
+                        <small class="text-muted text-uppercase placeholder-glow">
+                            <span class="placeholder col-6"></span>
+                        </small>
+                    </div>
+                </div>
+            `).join('');
+        }
+
         this.showLoading(true);
 
         try {
@@ -253,6 +287,7 @@ class MarketAnalyzer {
             this.displayMarkets();
             this.displayStats();
             this.showInsightsSection(true);
+            this.generateInsights(true); // Auto-generate insights (silent mode)
         } catch (error) {
             // Show helpful error message for Metaculus
             if (source === 'metaculus') {
@@ -279,20 +314,9 @@ class MarketAnalyzer {
         this.filteredMarkets = [...this.currentMarkets];
     }
 
-    async fetchMetaculusMarkets(query) {
-        let url = 'https://www.metaculus.com/api/posts/';
-        const params = new URLSearchParams({
-            limit: '50'
-        });
-
-        if (query) {
-            params.append('search', query);
-        }
-
-        url += '?' + params.toString();
-
+    async fetchWithProxy(url) {
         const corsProxies = [
-            'https://corsproxy.io/?',  // Most reliable
+            'https://corsproxy.io/?',
             'https://api.allorigins.win/raw?url=',
             'https://api.codetabs.com/v1/proxy?quest='
         ];
@@ -302,43 +326,64 @@ class MarketAnalyzer {
         for (const corsProxy of corsProxies) {
             try {
                 const proxiedUrl = corsProxy + encodeURIComponent(url);
-                console.log(`Trying Metaculus with proxy: ${corsProxy}`);
-
                 const response = await fetch(proxiedUrl);
-                if (!response.ok) {
-                    throw new Error(`Proxy returned ${response.status}`);
-                }
-
-                const data = await response.json();
-
-                const markets = data.results || data || [];
-
-                if (!Array.isArray(markets)) {
-                    throw new Error('Unexpected API response format');
-                }
-
-                if (markets.length > 0) {
-                    console.log('=== METACULUS COMPLETE DATA ===');
-                    console.log(JSON.stringify(markets[0], null, 2));
-                    console.log('================================');
-                }
-
-                this.currentMarkets = markets
-                    .filter(m => m.question)
-                    .map(m => this.normalizeMetaculusMarket(m));
-                this.filteredMarkets = [...this.currentMarkets];
-
-                console.log(`✅ Successfully fetched ${this.currentMarkets.length} markets from Metaculus`);
-                return;
-
+                if (!response.ok) throw new Error(`Status ${response.status}`);
+                return await response.json();
             } catch (error) {
-                console.warn(`❌ Proxy ${corsProxy} failed:`, error.message);
+                // console.warn(`Proxy ${corsProxy} failed:`, error.message);
                 lastError = error;
             }
         }
+        throw new Error(`All proxies failed. Last error: ${lastError?.message}`);
+    }
 
-        console.error('All CORS proxies failed for Metaculus');
-        throw new Error(`Failed to fetch Metaculus markets. All CORS proxies failed. Last error: ${lastError?.message || 'Unknown error'}`);
+    async fetchMetaculusMarkets(query) {
+        let url = 'https://www.metaculus.com/api/posts/';
+        const params = new URLSearchParams({
+            limit: '20' // Reduced limit for detail fetching performance
+        });
+
+        if (query) {
+            params.append('search', query);
+        }
+
+        url += '?' + params.toString();
+
+        try {
+            console.log('Fetching Metaculus list...');
+            const data = await this.fetchWithProxy(url);
+            const initialMarkets = data.results || data || [];
+
+            if (!Array.isArray(initialMarkets)) {
+                throw new Error('Unexpected API response format');
+            }
+
+            // Fetch details for each market to get valid probability
+            // The List API no longer returns prediction data, so we must fetch details
+            console.log(`Fetching details for ${initialMarkets.length} markets...`);
+
+            const detailedMarkets = await Promise.all(initialMarkets.map(async (m) => {
+                if (!m.id) return m;
+                try {
+                    const detailUrl = `https://www.metaculus.com/api/posts/${m.id}/`;
+                    return await this.fetchWithProxy(detailUrl);
+                } catch (e) {
+                    console.warn(`Failed to fetch detail for ${m.id}`, e);
+                    return m; // Fallback to list item
+                }
+            }));
+
+            this.currentMarkets = detailedMarkets
+                .filter(m => m.question)
+                .map(m => this.normalizeMetaculusMarket(m));
+
+            this.filteredMarkets = [...this.currentMarkets];
+            console.log(`✅ Successfully fetched ${this.currentMarkets.length} markets from Metaculus`);
+
+        } catch (error) {
+            console.error('Metaculus fetch failed:', error);
+            throw error;
+        }
     }
 
     normalizeManifoldMarket(market) {
@@ -448,6 +493,12 @@ class MarketAnalyzer {
         this.displayMarkets();
         this.calculateStats();
         this.displayStats();
+
+        // Debounce automatic insights for search/filtering
+        if (this.insightsDebounce) clearTimeout(this.insightsDebounce);
+        this.insightsDebounce = setTimeout(() => {
+            this.generateInsights(true);
+        }, 1000);
     }
 
     // ... calculateStats and displayStats match logic/structure
@@ -551,7 +602,7 @@ class MarketAnalyzer {
     `;
     }
 
-    async generateInsights() {
+    async generateInsights(silentMode = false) {
         const insightsContent = document.getElementById('insights-content');
         const btn = document.getElementById('btn-generate-insights');
 
@@ -559,12 +610,23 @@ class MarketAnalyzer {
 
         // Validation: Need markets first
         if (this.filteredMarkets.length === 0) {
-            this.showAlert('Please fetch some markets first!', 'warning');
+            if (!silentMode) this.showAlert('Please fetch some markets first!', 'warning');
             return;
         }
 
         btn.disabled = true;
         btn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Analyzing...';
+
+        // Add loading effect to content area
+        insightsContent.innerHTML = `
+            <div class="text-center py-5 fade-in">
+                <div class="spinner-border text-primary mb-3" role="status" style="width: 3rem; height: 3rem;">
+                    <span class="visually-hidden">Loading...</span>
+                </div>
+                <h5 class="fw-normal">Generating Market Insights...</h5>
+                <p class="text-muted small">Analyzing probability distributions and correlations</p>
+            </div>
+        `;
 
         try {
             const marketSummary = this.filteredMarkets.slice(0, 20).map(m => ({
@@ -600,7 +662,7 @@ class MarketAnalyzer {
                 ${!this.llmConfig.apiKey ? '<div class="alert alert-info mt-3"><small><i class="bi bi-info-circle me-1"></i> Running in basic mode. Configure LLM for deep semantic analysis.</small></div>' : ''}
             `;
 
-            this.showAlert('Analysis Complete!', 'success');
+            if (!silentMode) this.showAlert('Analysis Complete!', 'success');
 
         } catch (error) {
             insightsContent.innerHTML = `

@@ -7,6 +7,17 @@ class MarketAnalyzer {
         this.categories = ['AI', 'Politics', 'Economics', 'Sports', 'Technology', 'Science', 'Climate'];
         this.selectedCategories = new Set();
         this.currentSource = 'manifold';
+        this.metaculusServerBaseUrl = (typeof CONFIG !== 'undefined' && CONFIG.api?.metaculus?.serverBaseUrl) || '';
+        this.metaculusSettings = {
+            listLimit: (typeof CONFIG !== 'undefined' && CONFIG.api?.metaculus?.listLimit) || 20,
+            detailLimit: (typeof CONFIG !== 'undefined' && CONFIG.api?.metaculus?.detailLimit) || 10,
+            requestDelayMs: (typeof CONFIG !== 'undefined' && CONFIG.api?.metaculus?.requestDelayMs) || 1200,
+            maxRetries: (typeof CONFIG !== 'undefined' && CONFIG.api?.metaculus?.maxRetries) || 5
+        };
+        this.fetchCounter = 0;
+        this.activeFetchId = 0;
+        this.activeInsightId = 0;
+        this.isFetching = false;
         this.stats = {
             totalMarkets: 0,
             avgProbability: 0,
@@ -127,58 +138,6 @@ class MarketAnalyzer {
         }, 3000);
     }
 
-    // Updated Generate Function
-    async generateLLMInsights(markets) {
-        // Get dynamic values from UI
-        const systemPrompt = document.getElementById('system-prompt').value;
-        const currentModel = document.getElementById('model-select').value;
-
-        // User Prompt with Data
-        const userPrompt = `
-        Here is the current market data:
-        ${JSON.stringify(markets)}
-        
-        Please provide the insights as requested in the JSON format.
-        `;
-
-        const response = await fetch(`${this.llmConfig.baseUrl}/chat/completions`, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'Authorization': `Bearer ${this.llmConfig.apiKey}`
-            },
-            body: JSON.stringify({
-                model: currentModel || this.llmConfig.model, // Prefer UI value
-                messages: [
-                    { role: 'system', content: systemPrompt },
-                    { role: 'user', content: userPrompt }
-                ],
-                temperature: 1
-            })
-        });
-
-        if (!response.ok) {
-            const err = await response.text();
-            throw new Error(`LLM Error: ${err}`);
-        }
-
-        const data = await response.json();
-        const content = data.choices?.[0]?.message?.content;
-
-        if (!content) throw new Error('Invalid response from LLM');
-
-        // Extract JSON
-        const jsonMatch = content.match(/```json\n([\s\S]*?)\n```/) || content.match(/\[[\s\S]*\]/);
-        const jsonStr = jsonMatch ? jsonMatch[1] || jsonMatch[0] : content;
-
-        try {
-            return JSON.parse(jsonStr);
-        } catch (e) {
-            console.error('Failed to parse LLM Response:', content);
-            throw new Error('LLM returned invalid JSON');
-        }
-    }
-
     renderCategoryFilters() {
         const container = document.getElementById('category-filters');
         if (!container) return;
@@ -199,14 +158,12 @@ class MarketAnalyzer {
             card.addEventListener('click', (e) => {
                 const category = e.currentTarget.dataset.category;
 
-                // Toggle active class visually
-                if (this.selectedCategories.has(category)) {
-                    this.selectedCategories.delete(category);
-                    e.currentTarget.classList.remove('active', 'border-primary');
-                } else {
-                    this.selectedCategories.add(category);
-                    e.currentTarget.classList.add('active', 'border-primary');
-                }
+                // Single-select category: clear previous selection
+                container.querySelectorAll('.demo-card.active, .demo-card.border-primary')
+                    .forEach(activeCard => activeCard.classList.remove('active', 'border-primary'));
+                this.selectedCategories.clear();
+                this.selectedCategories.add(category);
+                e.currentTarget.classList.add('active', 'border-primary');
 
                 this.filterMarkets();
             });
@@ -239,21 +196,43 @@ class MarketAnalyzer {
     async fetchMarkets() {
         const source = document.querySelector('input[name="source"]:checked')?.value || 'manifold';
         const query = document.getElementById('query-input')?.value || '';
+        const fetchId = ++this.fetchCounter;
+        this.activeFetchId = fetchId;
+        this.isFetching = true;
 
         // Clear State & UI immediately to avoid showing stale data while loading
         this.currentMarkets = [];
         this.filteredMarkets = [];
 
         const marketsContainer = document.getElementById('markets-container');
-        if (marketsContainer) marketsContainer.innerHTML = '';
+        if (marketsContainer) {
+            marketsContainer.innerHTML = this.renderMarketSkeletons(6);
+        }
 
         const insightsContent = document.getElementById('insights-content');
         if (insightsContent) {
             insightsContent.innerHTML = `
-                <div class="text-center py-5 text-muted fade-in">
-                  <i class="bi bi-hourglass-split display-1 mb-3 d-block opacity-25"></i>
-                  <h4 class="fw-light">Updating Data...</h4>
-                  <p>Fetching fresh market data for analysis.</p>
+                <div class="row g-3">
+                  ${Array(6).fill(0).map(() => `
+                    <div class="col-md-6 col-lg-4 fade-in">
+                      <div class="card h-100 demo-card">
+                        <div class="card-body">
+                          <div class="d-flex justify-content-between align-items-start mb-3 placeholder-glow">
+                            <span class="placeholder col-4"></span>
+                            <span class="placeholder col-3"></span>
+                          </div>
+                          <div class="placeholder-glow mb-3">
+                            <span class="placeholder col-12"></span>
+                            <span class="placeholder col-9"></span>
+                          </div>
+                          <div class="d-flex justify-content-between align-items-center placeholder-glow">
+                            <span class="placeholder col-4"></span>
+                            <span class="placeholder col-4"></span>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  `).join('')}
                 </div>
             `;
         }
@@ -287,17 +266,39 @@ class MarketAnalyzer {
             this.displayMarkets();
             this.displayStats();
             this.showInsightsSection(true);
-            this.generateInsights(true); // Auto-generate insights (silent mode)
+            this.isFetching = false;
+            this.generateInsights(true, fetchId); // Auto-generate insights (silent mode)
         } catch (error) {
-            // Show helpful error message for Metaculus
-            if (source === 'metaculus') {
-                this.showMetaculusError();
-            } else {
-                this.showError(`Error fetching data: ${error.message}`);
-            }
+            this.showError(`Error fetching data: ${error.message}`);
         } finally {
+            if (this.activeFetchId === fetchId) {
+                this.isFetching = false;
+            }
             this.showLoading(false);
         }
+    }
+
+    renderMarketSkeletons(count = 6) {
+        return Array(count).fill(0).map(() => `
+            <div class="col-md-6 col-lg-4">
+                <div class="card h-100 demo-card">
+                    <div class="card-body">
+                        <div class="d-flex justify-content-between align-items-start mb-2 placeholder-glow">
+                            <span class="placeholder col-4"></span>
+                            <span class="placeholder col-3"></span>
+                        </div>
+                        <div class="placeholder-glow mb-3">
+                            <span class="placeholder col-12"></span>
+                            <span class="placeholder col-9"></span>
+                        </div>
+                        <div class="d-flex justify-content-between align-items-center placeholder-glow">
+                            <span class="placeholder col-4"></span>
+                            <span class="placeholder col-4"></span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        `).join('');
     }
 
     // Skip fetch functions as they are logic only...
@@ -314,33 +315,44 @@ class MarketAnalyzer {
         this.filteredMarkets = [...this.currentMarkets];
     }
 
-    async fetchWithProxy(url) {
-        const corsProxies = [
-            'https://corsproxy.io/?',
-            'https://api.allorigins.win/raw?url=',
-            'https://api.codetabs.com/v1/proxy?quest='
-        ];
-
-        let lastError = null;
-
-        for (const corsProxy of corsProxies) {
-            try {
-                const proxiedUrl = corsProxy + encodeURIComponent(url);
-                const response = await fetch(proxiedUrl);
-                if (!response.ok) throw new Error(`Status ${response.status}`);
-                return await response.json();
-            } catch (error) {
-                // console.warn(`Proxy ${corsProxy} failed:`, error.message);
-                lastError = error;
-            }
+    async fetchMetaculusApi(path, params = {}) {
+        const baseUrl = this.metaculusServerBaseUrl.replace(/\/$/, '');
+        if (!baseUrl) {
+            throw new Error('Metaculus server base URL is not configured.');
         }
-        throw new Error(`All proxies failed. Last error: ${lastError?.message}`);
+
+        const url = new URL(`${baseUrl}/api/metaculus/${path.replace(/^\//, '')}`);
+        Object.entries(params).forEach(([key, value]) => {
+            if (value !== undefined && value !== null && value !== '') {
+                url.searchParams.set(key, value);
+            }
+        });
+
+        const maxRetries = this.metaculusSettings.maxRetries;
+        for (let attempt = 0; attempt <= maxRetries; attempt++) {
+            const response = await fetch(url);
+            if (response.ok) {
+                return await response.json();
+            }
+
+            const err = await response.text();
+            if ((response.status === 429 || response.status >= 500) && attempt < maxRetries) {
+                const retryAfter = response.headers.get('retry-after');
+                const retryAfterMs = retryAfter ? parseInt(retryAfter, 10) * 1000 : 0;
+                const backoffMs = this.metaculusSettings.requestDelayMs * (attempt + 1);
+                const jitterMs = Math.floor(Math.random() * 250);
+                await this.sleep(Math.max(retryAfterMs, backoffMs) + jitterMs);
+                continue;
+            }
+            throw new Error(`Metaculus API error (${response.status}): ${err}`);
+        }
+        throw new Error('Metaculus API error: retries exhausted');
     }
 
     async fetchMetaculusMarkets(query) {
         let url = 'https://www.metaculus.com/api/posts/';
         const params = new URLSearchParams({
-            limit: '20' // Reduced limit for detail fetching performance
+            limit: String(this.metaculusSettings.listLimit)
         });
 
         if (query) {
@@ -350,28 +362,56 @@ class MarketAnalyzer {
         url += '?' + params.toString();
 
         try {
-            console.log('Fetching Metaculus list...');
-            const data = await this.fetchWithProxy(url);
+            console.log('Fetching Metaculus list via server...');
+            const data = this.metaculusServerBaseUrl
+                ? await this.fetchMetaculusApi('posts/', { limit: String(this.metaculusSettings.listLimit), search: query || '' })
+                : await (async () => {
+                    const response = await fetch(url);
+                    if (!response.ok) {
+                        const err = await response.text();
+                        throw new Error(`Metaculus API error (${response.status}): ${err}`);
+                    }
+                    return await response.json();
+                })();
             const initialMarkets = data.results || data || [];
 
             if (!Array.isArray(initialMarkets)) {
                 throw new Error('Unexpected API response format');
             }
 
-            // Fetch details for each market to get valid probability
-            // The List API no longer returns prediction data, so we must fetch details
-            console.log(`Fetching details for ${initialMarkets.length} markets...`);
+            // Fetch details with strict rate limiting to avoid 429s
+            const detailTargets = initialMarkets.slice(0, this.metaculusSettings.detailLimit);
+            console.log(`Fetching details for ${detailTargets.length} markets...`);
 
-            const detailedMarkets = await Promise.all(initialMarkets.map(async (m) => {
-                if (!m.id) return m;
-                try {
-                    const detailUrl = `https://www.metaculus.com/api/posts/${m.id}/`;
-                    return await this.fetchWithProxy(detailUrl);
-                } catch (e) {
-                    console.warn(`Failed to fetch detail for ${m.id}`, e);
-                    return m; // Fallback to list item
+            const detailedMarkets = [];
+            for (let i = 0; i < detailTargets.length; i++) {
+                const market = detailTargets[i];
+                if (!market.id) {
+                    detailedMarkets.push(market);
+                    continue;
                 }
-            }));
+
+                try {
+                    if (this.metaculusServerBaseUrl) {
+                        detailedMarkets.push(await this.fetchMetaculusApi(`posts/${market.id}/`));
+                    } else {
+                        const detailUrl = `https://www.metaculus.com/api/posts/${market.id}/`;
+                        const detailResponse = await fetch(detailUrl);
+                        if (!detailResponse.ok) {
+                            const err = await detailResponse.text();
+                            throw new Error(`Metaculus detail error (${detailResponse.status}): ${err}`);
+                        }
+                        detailedMarkets.push(await detailResponse.json());
+                    }
+                } catch (e) {
+                    console.warn(`Failed to fetch detail for ${market.id}`, e);
+                    detailedMarkets.push(market);
+                }
+
+                if (i < detailTargets.length - 1) {
+                    await this.sleep(this.metaculusSettings.requestDelayMs);
+                }
+            }
 
             this.currentMarkets = detailedMarkets
                 .filter(m => m.question)
@@ -384,6 +424,10 @@ class MarketAnalyzer {
             console.error('Metaculus fetch failed:', error);
             throw error;
         }
+    }
+
+    sleep(ms) {
+        return new Promise(resolve => setTimeout(resolve, ms));
     }
 
     normalizeManifoldMarket(market) {
@@ -409,20 +453,30 @@ class MarketAnalyzer {
 
         let prob = 0;
 
-        if (question.aggregations?.recency_weighted?.latest?.centers?.[0]) {
-            prob = question.aggregations.recency_weighted.latest.centers[0];
+        const aggregationLatest = question.aggregations?.recency_weighted?.latest ||
+            question.aggregations?.unweighted?.latest ||
+            question.aggregations?.mean?.latest ||
+            question.aggregations?.median?.latest;
+
+        const candidates = [
+            aggregationLatest?.centers?.[0],
+            aggregationLatest?.means?.[0],
+            aggregationLatest?.forecast_values?.[1],
+            question.community_prediction?.full?.q2,
+            question.my_forecasts?.latest?.forecast_values?.[1],
+            question.possibilities?.type === 'binary' ? question.possibilities?.probability : undefined,
+            question.probability
+        ];
+
+        for (const value of candidates) {
+            if (typeof value === 'number') {
+                prob = value;
+                break;
+            }
         }
-        else if (question.community_prediction?.full?.q2) {
-            prob = question.community_prediction.full.q2;
-        }
-        else if (question.my_forecasts?.latest?.forecast_values?.[1]) {
-            prob = question.my_forecasts.latest.forecast_values[1];
-        }
-        else if (question.possibilities?.type === 'binary' && question.possibilities?.probability) {
-            prob = question.possibilities.probability;
-        }
-        else if (typeof question.probability === 'number') {
-            prob = question.probability;
+
+        if (prob > 1 && prob <= 100) {
+            prob = prob / 100;
         }
 
         const participants = question.nr_forecasters ||
@@ -494,10 +548,26 @@ class MarketAnalyzer {
         this.calculateStats();
         this.displayStats();
 
+        if (this.filteredMarkets.length === 0) {
+            const insightsContent = document.getElementById('insights-content');
+            if (insightsContent) {
+                insightsContent.innerHTML = `
+                    <div class="text-center py-5 text-muted">
+                        <i class="bi bi-bar-chart-line display-1 mb-3 d-block opacity-25"></i>
+                        <h4 class="fw-light">Ready to analyze market data</h4>
+                        <p>Fetch some markets and click "Run Analysis" to generate deep insights.</p>
+                    </div>
+                `;
+            }
+            const insightsBody = insightsContent?.closest('.card-body');
+            if (insightsBody) insightsBody.classList.remove('insights-scroll');
+            return;
+        }
+
         // Debounce automatic insights for search/filtering
         if (this.insightsDebounce) clearTimeout(this.insightsDebounce);
         this.insightsDebounce = setTimeout(() => {
-            this.generateInsights(true);
+            this.generateInsights(true, this.activeFetchId);
         }, 1000);
     }
 
@@ -602,11 +672,15 @@ class MarketAnalyzer {
     `;
     }
 
-    async generateInsights(silentMode = false) {
+    async generateInsights(silentMode = false, fetchId = this.activeFetchId) {
         const insightsContent = document.getElementById('insights-content');
         const btn = document.getElementById('btn-generate-insights');
+        const insightsBody = insightsContent?.closest('.accordion-body');
 
-        if (!insightsContent || !btn) return;
+        if (!insightsContent) return;
+        if (fetchId !== this.activeFetchId || this.isFetching) return;
+
+        const insightId = ++this.activeInsightId;
 
         // Validation: Need markets first
         if (this.filteredMarkets.length === 0) {
@@ -614,17 +688,34 @@ class MarketAnalyzer {
             return;
         }
 
-        btn.disabled = true;
-        btn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Analyzing...';
+        if (btn) {
+            btn.disabled = true;
+            btn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Analyzing...';
+        }
 
         // Add loading effect to content area
         insightsContent.innerHTML = `
-            <div class="text-center py-5 fade-in">
-                <div class="spinner-border text-primary mb-3" role="status" style="width: 3rem; height: 3rem;">
-                    <span class="visually-hidden">Loading...</span>
+            <div class="row g-3">
+              ${Array(6).fill(0).map(() => `
+                <div class="col-md-6 col-lg-4 fade-in">
+                  <div class="card h-100 demo-card">
+                    <div class="card-body">
+                      <div class="d-flex justify-content-between align-items-start mb-3 placeholder-glow">
+                        <span class="placeholder col-4"></span>
+                        <span class="placeholder col-3"></span>
+                      </div>
+                      <div class="placeholder-glow mb-3">
+                        <span class="placeholder col-12"></span>
+                        <span class="placeholder col-9"></span>
+                      </div>
+                      <div class="d-flex justify-content-between align-items-center placeholder-glow">
+                        <span class="placeholder col-4"></span>
+                        <span class="placeholder col-4"></span>
+                      </div>
+                    </div>
+                  </div>
                 </div>
-                <h5 class="fw-normal">Generating Market Insights...</h5>
-                <p class="text-muted small">Analyzing probability distributions and correlations</p>
+              `).join('')}
             </div>
         `;
 
@@ -640,16 +731,34 @@ class MarketAnalyzer {
             // Check if we have LLM config
             let insights;
             if (this.llmConfig.baseUrl && this.llmConfig.apiKey) {
-                insights = await this.generateLLMInsights(marketSummary); // NEW
+                try {
+                    insights = await this.generateLLMInsights(marketSummary);
+                } catch (error) {
+                    console.warn('LLM insight generation failed, falling back to local:', error);
+                    insights = this.generateLocalInsights(marketSummary);
+                    if (!silentMode) {
+                        this.showAlert('LLM failed. Showing local insights instead.', 'warning');
+                    }
+                }
             } else {
                 insights = this.generateLocalInsights(marketSummary); // OLD fallback
             }
 
             // Render Results as Cards
+            if (insightId !== this.activeInsightId || fetchId !== this.activeFetchId || this.isFetching) {
+                return;
+            }
+            if (insightsBody) {
+                if (insights.length > 6) {
+                    insightsBody.classList.add('insights-scroll');
+                } else {
+                    insightsBody.classList.remove('insights-scroll');
+                }
+            }
             insightsContent.innerHTML = `
                 <div class="row g-3">
                     ${insights.map(insight => `
-                    <div class="col-md-6 fade-in">
+                    <div class="col-md-6 col-lg-4 fade-in">
                         <div class="card h-100 bg-body-tertiary border-0 shadow-sm">
                             <div class="card-body">
                                 <h6 class="card-title text-primary"><i class="bi bi-lightbulb-fill me-2"></i>${insight.title}</h6>
@@ -665,6 +774,12 @@ class MarketAnalyzer {
             if (!silentMode) this.showAlert('Analysis Complete!', 'success');
 
         } catch (error) {
+            if (insightId !== this.activeInsightId) {
+                return;
+            }
+            if (insightsBody) {
+                insightsBody.classList.remove('insights-scroll');
+            }
             insightsContent.innerHTML = `
                 <div class="alert alert-warning">
                   <i class="bi bi-exclamation-octagon me-2"></i>Could not generate insights: ${error.message}
@@ -672,28 +787,66 @@ class MarketAnalyzer {
             `;
             this.showAlert('Analysis Failed', 'danger');
         } finally {
-            btn.disabled = false;
-            btn.innerHTML = '<i class="bi bi-cpu-fill me-1"></i> Re-Run Analysis';
+            if (insightId === this.activeInsightId) {
+            if (btn) {
+                btn.disabled = false;
+                btn.innerHTML = '<i class="bi bi-cpu-fill me-1"></i> Re-Run Analysis';
+            }
         }
+    }
     }
 
     // NEW FUNCTION: Chat with LLM
+    parseLLMResponse(content) {
+        const fenced = content.match(/```json\s*([\s\S]*?)\s*```/i);
+        const arrayMatch = content.match(/\[[\s\S]*\]/);
+        const objectMatch = content.match(/\{[\s\S]*\}/);
+        const jsonStr = fenced?.[1] || arrayMatch?.[0] || objectMatch?.[0] || content;
+        return JSON.parse(jsonStr);
+    }
+
+    normalizeInsights(raw) {
+        const insightsArray = Array.isArray(raw) ? raw : raw?.insights;
+        if (!Array.isArray(insightsArray)) {
+            throw new Error('LLM returned unexpected JSON structure');
+        }
+
+        const normalized = insightsArray.map((insight, index) => ({
+            title: String(insight?.title || `Insight ${index + 1}`).trim(),
+            description: String(insight?.description || '').trim()
+        })).filter(item => item.description);
+
+        if (normalized.length === 0) {
+            throw new Error('LLM returned empty insights');
+        }
+
+        return normalized;
+    }
+
     async generateLLMInsights(markets) {
-        // Get dynamic values from UI
-        const systemPrompt = document.getElementById('system-prompt')?.value || 'You are an expert analyst.';
+        const systemPrompt = document.getElementById('system-prompt')?.value ||
+            'You are a prediction market intelligence analyst.';
         const currentModel = document.getElementById('model-select')?.value;
 
-        // User Prompt with Data
         const userPrompt = `
-        Analyze these prediction markets and return 4 high-value insights.
-        
-        Data: ${JSON.stringify(markets)}
-        
-        REQUIREMENTS:
-        - Return ONLY raw JSON array.
-        - Fields: "title" (short punchy header), "description" (2-3 sentences).
-        - Focus on: Contrarian signals, Risk assessment, and Thematic clusters.
-        `;
+Goal:
+Convert prediction market crowd wisdom into actionable business intelligence for a decision support system.
+Prediction markets are faster than news and provide probabilities. Use them to filter noise and surface
+context-specific, high-impact insights.
+
+What to detect:
+- Consensus signals (high confidence across related markets).
+- Divergences or contradictions (e.g., similar topics with different probabilities or sources).
+- Emerging narratives and risk monitors (what should be watched next).
+- Uncertainty hotspots (markets near 50% or low participation).
+
+Data (JSON array of markets):
+${JSON.stringify(markets)}
+
+Output format:
+- Return ONLY a raw JSON array (no markdown or prose).
+- Each item: { "title": "Short insight", "description": "2-3 sentences with actionable implication." }
+`;
 
         const response = await fetch(`${this.llmConfig.baseUrl}/chat/completions`, {
             method: 'POST',
@@ -702,12 +855,12 @@ class MarketAnalyzer {
                 'Authorization': `Bearer ${this.llmConfig.apiKey}`
             },
             body: JSON.stringify({
-                model: currentModel || this.llmConfig.model,
+                model: currentModel || this.llmConfig.model || 'gpt-5-nano',
                 messages: [
                     { role: 'system', content: systemPrompt },
                     { role: 'user', content: userPrompt }
                 ],
-                temperature: 1
+                temperature: 0.7
             })
         });
 
@@ -721,13 +874,10 @@ class MarketAnalyzer {
 
         if (!content) throw new Error('Invalid response from LLM');
 
-        // Extract JSON
-        const jsonMatch = content.match(/```json\n([\s\S]*?)\n```/) || content.match(/\[[\s\S]*\]/);
-        const jsonStr = jsonMatch ? jsonMatch[1] || jsonMatch[0] : content;
-
         try {
-            return JSON.parse(jsonStr);
-        } catch (e) {
+            const parsed = this.parseLLMResponse(content);
+            return this.normalizeInsights(parsed);
+        } catch (error) {
             console.error('Failed to parse LLM Response:', content);
             throw new Error('LLM returned invalid JSON');
         }
@@ -844,43 +994,6 @@ class MarketAnalyzer {
         }
     }
 
-    showMetaculusError() {
-        const container = document.getElementById('markets-container');
-        if (container) {
-            container.innerHTML = `
-                <div class="col-12">
-                    <div class="alert alert-warning">
-                        <h5><i class="bi bi-info-circle-fill me-2"></i>Metaculus API Not Available in Browser</h5>
-                        <p class="mb-2">
-                            The Metaculus API is designed for <strong>server-side use only</strong> and cannot be accessed directly from a web browser.
-                        </p>
-                        <hr>
-                        <p class="mb-2"><strong>Why this happens:</strong></p>
-                        <ul class="mb-3">
-                            <li>Metaculus blocks CORS (Cross-Origin Resource Sharing) requests</li>
-                            <li>CORS proxy services are being blocked with 403 Forbidden errors</li>
-                            <li>This is a security measure to prevent unauthorized scraping</li>
-                        </ul>
-                        <p class="mb-2"><strong>Solutions:</strong></p>
-                        <ol class="mb-3">
-                            <li><strong>Use Manifold Markets</strong> - Fully functional with all features! ✅</li>
-                            <li><strong>Build a backend proxy</strong> - See METACULUS-UPDATE.md for code examples</li>
-                            <li><strong>Use Metaculus directly</strong> - Visit <a href="https://www.metaculus.com" target="_blank">metaculus.com</a></li>
-                        </ol>
-                        <div class="alert alert-info mb-0">
-                            <h6 class="mb-2"><i class="bi bi-lightbulb-fill me-2"></i>Recommended Action</h6>
-                            <p class="mb-2">
-                                Switch to <strong>Manifold Markets</strong> for a fully functional experience!
-                            </p>
-                            <button class="btn btn-primary btn-sm" onclick="document.getElementById('source-manifold').click(); document.getElementById('btn-fetch').click();">
-                                <i class="bi bi-arrow-right-circle me-1"></i>Switch to Manifold Markets
-                            </button>
-                        </div>
-                    </div>
-                </div>
-            `;
-        }
-    }
 }
 
 // Initialize the application when DOM is ready

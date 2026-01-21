@@ -13,6 +13,11 @@ const CONFIG = {
             baseUrl: 'https://www.metaculus.com/api',
             defaultLimit: 50,
             defaultOrder: '-published_at', // Use '-' prefix for descending
+            serverBaseUrl: 'https://market-analyzer-metaculus.ritesh-marketanalyzer.workers.dev', // Cloudflare Worker base URL
+            listLimit: 20,
+            detailLimit: 8,
+            requestDelayMs: 1500,
+            maxRetries: 5,
         },
     },
 

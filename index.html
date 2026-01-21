@@ -21,10 +21,7 @@
         <span class="navbar-toggler-icon"></span>
       </button>
       <div class="collapse navbar-collapse" id="navbarSupportedContent">
-        <ul class="navbar-nav me-auto">
-          <li class="nav-item"><a class="nav-link" href="#market-feed">Feed</a></li>
-          <li class="nav-item"><a class="nav-link" href="#market-insights">Insights</a></li>
-        </ul>
+        <ul class="navbar-nav me-auto"></ul>
         <button class="btn btn-outline-primary me-2" data-bs-toggle="modal" data-bs-target="#llmConfigModal">
           <i class="bi bi-gear-fill me-1"></i> Configure LLM
         </button>
@@ -51,11 +48,11 @@
     <h1 class="display-1 my-4 text-center">MarketAnalyzer</h1>
     <h2 class="display-6 text-center">Analyze <em>prediction markets</em> using LLMs</h2>
     <div class="mx-auto my-3 narrative">
-      <p class="mb-2">Quickly discover trends, correlations, and insights from global prediction markets.</p>
+      <p class="mb-2">Turn prediction market signals into decision-ready intelligence.</p>
       <ul class="mb-0">
-        <li>Aggregate data from Manifold Markets and Metaculus.</li>
-        <li>Filter by category to find specific domains like AI or Politics.</li>
-        <li>Use AI to generate deep semantic insights and forecasts.</li>
+        <li>Use markets as a faster-than-news indicator with clear probabilities.</li>
+        <li>Filter noise with semantic clustering across Manifold and Metaculus.</li>
+        <li>Spot consensus, contradictions, and uncertainty to power an automated risk monitor.</li>
       </ul>
     </div>
 
@@ -93,25 +90,23 @@
             </div>
             <div class="mb-3">
               <label for="system-prompt" class="form-label">System Prompt</label>
-              <textarea id="system-prompt" class="form-control font-monospace" rows="12">You are an elite Prediction Market Analyst. 
-Analyze the following prediction markets and identify 3-5 unique, high-value insights.
+              <textarea id="system-prompt" class="form-control font-monospace" rows="12">You are a senior Prediction Market Intelligence analyst building a decision support system.
+Your mission is to convert crowd wisdom into actionable business intelligence.
 
-Your goal is to find non-obvious patterns, such as:
-1. Unexpected correlations between different categories.
-2. The tension between Geopolitical risks and Financial optimism.
-3. Emerging narratives that aren't explicit in the titles.
+Principles:
+- Prediction markets move faster than news; prioritize signal over noise.
+- Probabilities are decision inputs; explain what a probability implies for action or risk.
+- Focus on context-specific insights, not a list of bets.
+- Identify consensus, divergence, and uncertainty across related markets.
 
-Input Data:
-A JSON array of market objects containing: question, probability, participants, tags.
+Input:
+A JSON array of markets with question, probability, participants, tags, and source.
 
-Output Format:
-Return ONLY a raw JSON array (no markdown code blocks) with this structure:
-[
-  {
-    "title": "Short Insight Title",
-    "description": "Two sentence explanation of the insight..."
-  }
-]</textarea>
+Output:
+Return ONLY a raw JSON array (no markdown code blocks).
+Each item must include:
+  - "title": a short, punchy insight
+  - "description": 2-3 sentences with evidence and an actionable implication.</textarea>
               <div class="form-text">Used as the LLM system message. You can customize it.</div>
             </div>
           </div>
@@ -151,42 +146,48 @@ Return ONLY a raw JSON array (no markdown code blocks) with this structure:
 
     <!-- Insights Section (Response Container) -->
     <div id="market-insights" class="mb-4">
-      <div class="card border-primary">
-        <div class="card-header d-flex justify-content-between align-items-center bg-transparent border-primary-subtle">
-          <h5 class="mb-0 text-primary"><i class="bi bi-stars me-2"></i>AI Analyst Report</h5>
-          <button class="btn btn-sm btn-primary" id="btn-generate-insights">
-            <i class="bi bi-cpu-fill me-1"></i> Run Analysis
-          </button>
-        </div>
-        <div class="card-body">
-          <div id="insights-content">
-            <div class="text-center py-5 text-muted">
-              <i class="bi bi-bar-chart-line display-1 mb-3 d-block opacity-25"></i>
-              <h4 class="fw-light">Ready to analyze market data</h4>
-              <p>Fetch some markets and click "Run Analysis" to generate deep insights.</p>
+      <div class="accordion" id="insights-accordion">
+        <div class="accordion-item">
+          <h2 class="accordion-header" id="insights-heading">
+            <button class="accordion-button" type="button" data-bs-toggle="collapse"
+              data-bs-target="#insights-collapse" aria-expanded="true" aria-controls="insights-collapse">
+              <i class="bi bi-stars me-2"></i>AI Analyst Report
+            </button>
+          </h2>
+          <div id="insights-collapse" class="accordion-collapse collapse show" data-bs-parent="#insights-accordion">
+            <div class="accordion-body">
+              <div id="insights-content">
+                <div class="text-center py-5 text-muted">
+                  <i class="bi bi-bar-chart-line display-1 mb-3 d-block opacity-25"></i>
+                  <h4 class="fw-light">Ready to analyze market data</h4>
+                  <p>Fetch some markets and click "Run Analysis" to generate deep insights.</p>
+                </div>
+              </div>
             </div>
           </div>
         </div>
       </div>
     </div>
 
-    <!-- Loading -->
-    <div id="loading" class="d-none">
-      <div class="loading-container">
-        <div class="loading-spinner text-primary mb-3"></div>
-        <p class="text-muted">Fetching market data...</p>
-      </div>
-    </div>
-
     <!-- Market Feed -->
-    <div id="market-feed">
-      <div class="d-flex justify-content-between align-items-center mb-3">
-        <h3 class="h5">Market Feed</h3>
-        <button id="btn-export-feed" class="btn btn-sm btn-outline-secondary"><i class="bi bi-download"></i>
-          Export</button>
-      </div>
-      <div id="markets-container" class="row g-3">
-        <!-- Market Cards -->
+    <div id="market-feed" class="mb-4">
+      <div class="accordion" id="market-feed-accordion">
+        <div class="accordion-item">
+          <h2 class="accordion-header" id="market-feed-heading">
+            <button class="accordion-button" type="button" data-bs-toggle="collapse"
+              data-bs-target="#market-feed-collapse" aria-expanded="true" aria-controls="market-feed-collapse">
+              <i class="bi bi-list-stars me-2"></i>Market Feed
+            </button>
+          </h2>
+          <div id="market-feed-collapse" class="accordion-collapse collapse show"
+            data-bs-parent="#market-feed-accordion">
+            <div class="accordion-body">
+              <div id="markets-container" class="row g-3">
+                <!-- Market Cards -->
+              </div>
+            </div>
+          </div>
+        </div>
       </div>
     </div>
 

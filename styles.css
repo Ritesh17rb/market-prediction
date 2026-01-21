@@ -4,7 +4,13 @@
 
 body {
     margin-bottom: 50vh;
+    font-size: 1.1875rem;
     font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", "Noto Sans", "Liberation Sans", Arial, sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji";
+}
+
+.navbar-brand {
+    font-size: 1.35rem;
+    letter-spacing: 0.02em;
 }
 
 .narrative {
@@ -31,6 +37,31 @@ body {
 .demo-card.active {
     border-color: var(--bs-primary);
     background-color: rgba(13, 110, 253, 0.05);
+}
+
+.card .accordion-button {
+    box-shadow: none;
+}
+
+.card .accordion-button:not(.collapsed) {
+    background-color: rgba(13, 110, 253, 0.08);
+}
+
+.card .accordion-button:focus {
+    box-shadow: none;
+}
+
+.insights-scroll {
+    max-height: 560px;
+    overflow-y: auto;
+    overflow-x: hidden;
+    padding-right: 0.25rem;
+}
+
+@media (max-width: 991.98px) {
+    .insights-scroll {
+        max-height: 680px;
+    }
 }
 
 /* Custom Scrollbar to match modern feel */

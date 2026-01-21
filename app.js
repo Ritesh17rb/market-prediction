@@ -868,7 +868,7 @@ Output format:
                     { role: 'system', content: systemPrompt },
                     { role: 'user', content: userPrompt }
                 ],
-                temperature: 0.7
+                temperature: 1
             })
         });
 

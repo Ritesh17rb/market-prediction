@@ -729,19 +729,28 @@ class MarketAnalyzer {
             }));
 
             // Check if we have LLM config
+            if (!this.llmConfig.baseUrl || !this.llmConfig.apiKey) {
+                insightsContent.innerHTML = `
+                    <div class="alert alert-info">
+                      <i class="bi bi-info-circle me-2"></i>Configure the LLM to generate AI insights.
+                    </div>
+                `;
+                if (!silentMode) this.showAlert('Configure LLM to generate insights.', 'warning');
+                return;
+            }
+
             let insights;
-            if (this.llmConfig.baseUrl && this.llmConfig.apiKey) {
-                try {
-                    insights = await this.generateLLMInsights(marketSummary);
-                } catch (error) {
-                    console.warn('LLM insight generation failed, falling back to local:', error);
-                    insights = this.generateLocalInsights(marketSummary);
-                    if (!silentMode) {
-                        this.showAlert('LLM failed. Showing local insights instead.', 'warning');
-                    }
-                }
-            } else {
-                insights = this.generateLocalInsights(marketSummary); // OLD fallback
+            try {
+                insights = await this.generateLLMInsights(marketSummary);
+            } catch (error) {
+                console.warn('LLM insight generation failed:', error);
+                insightsContent.innerHTML = `
+                    <div class="alert alert-warning">
+                      <i class="bi bi-exclamation-octagon me-2"></i>LLM insights failed. Try again or adjust your model settings.
+                    </div>
+                `;
+                if (!silentMode) this.showAlert('LLM failed to generate insights.', 'warning');
+                return;
             }
 
             // Render Results as Cards
@@ -768,7 +777,6 @@ class MarketAnalyzer {
                     </div>
                     `).join('')}
                 </div>
-                ${!this.llmConfig.apiKey ? '<div class="alert alert-info mt-3"><small><i class="bi bi-info-circle me-1"></i> Running in basic mode. Configure LLM for deep semantic analysis.</small></div>' : ''}
             `;
 
             if (!silentMode) this.showAlert('Analysis Complete!', 'success');

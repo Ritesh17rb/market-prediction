@@ -8,17 +8,7 @@ const CONFIG = {
             baseUrl: 'https://api.manifold.markets/v0',
             defaultLimit: 50,
             defaultSort: 'liquidity', // Options: 'created-time', 'updated-time', 'last-bet-time', 'liquidity'
-        },
-        metaculus: {
-            baseUrl: 'https://www.metaculus.com/api',
-            defaultLimit: 50,
-            defaultOrder: '-published_at', // Use '-' prefix for descending
-            serverBaseUrl: 'https://market-analyzer-metaculus.ritesh-marketanalyzer.workers.dev', // Cloudflare Worker base URL
-            listLimit: 20,
-            detailLimit: 8,
-            requestDelayMs: 1500,
-            maxRetries: 5,
-        },
+        }
     },
 
     // Categories for auto-tagging
@@ -133,7 +123,7 @@ const CONFIG = {
         cardAnimationDelay: 50, // milliseconds between each card animation
         maxTagsPerCard: 3,
         autoFetchOnLoad: true,
-        defaultSource: 'manifold', // Options: 'manifold', 'metaculus'
+        defaultSource: 'manifold',
     },
 
     // Stats calculation

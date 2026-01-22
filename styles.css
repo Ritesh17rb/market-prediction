@@ -51,6 +51,153 @@ body {
     box-shadow: none;
 }
 
+.digest-summary {
+    border-left: 4px solid rgba(13, 110, 253, 0.35);
+    padding-left: 1rem;
+}
+
+.digest-kicker {
+    font-size: 0.7rem;
+    letter-spacing: 0.2em;
+    text-transform: uppercase;
+    color: var(--bs-secondary-color);
+}
+
+.digest-headline {
+    font-weight: 600;
+}
+
+.digest-card,
+.digest-list-card {
+    border: 1px solid var(--bs-border-color);
+    background: var(--bs-body-bg);
+}
+
+.digest-badge {
+    font-size: 0.7rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+}
+
+.delta-pill {
+    font-size: 0.75rem;
+    font-weight: 600;
+    padding: 0.2rem 0.6rem;
+    border-radius: 999px;
+    white-space: nowrap;
+}
+
+.delta-up {
+    background: #d1e7dd;
+    color: #0f5132;
+}
+
+.delta-down {
+    background: #f8d7da;
+    color: #842029;
+}
+
+[data-bs-theme="dark"] .delta-up {
+    background: #051b11;
+    color: #75b798;
+}
+
+[data-bs-theme="dark"] .delta-down {
+    background: #2c0b0e;
+    color: #ea868f;
+}
+
+.digest-list li {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    padding: 0.4rem 0;
+    border-bottom: 1px dashed var(--bs-border-color);
+}
+
+.digest-list li:last-child {
+    border-bottom: none;
+}
+
+.sparkline {
+    width: 100%;
+    height: 24px;
+    color: #0d6efd;
+}
+
+.sparkline-feed {
+    color: #20c997;
+}
+
+.sparkline-digest {
+    color: #0dcaf0;
+}
+
+.feed-trend .delta-pill {
+    font-size: 0.75rem;
+}
+
+.trend-meta {
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+}
+
+.answer-highlights {
+    display: grid;
+    gap: 0.35rem;
+}
+
+.answer-row {
+    display: flex;
+    justify-content: space-between;
+    gap: 0.75rem;
+    font-size: 0.85rem;
+    color: var(--bs-secondary-color);
+    align-items: baseline;
+    min-width: 0;
+}
+
+.answer-text {
+    flex: 1;
+    min-width: 0;
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.answer-prob {
+    font-weight: 600;
+    color: var(--bs-body-color);
+    flex: 0 0 auto;
+}
+
+.feed-insight {
+    border-top: 1px dashed var(--bs-border-color);
+    padding-top: 0.75rem;
+    color: var(--bs-secondary-color);
+}
+
+.feed-insight-text {
+    display: block;
+    line-height: 1.4;
+    max-height: calc(1.4em * 3);
+    overflow: hidden;
+    display: -webkit-box;
+    -webkit-line-clamp: 3;
+    -webkit-box-orient: vertical;
+    overflow-wrap: anywhere;
+    word-break: break-word;
+}
+
+.digest-insight {
+    border-top: 1px dashed var(--bs-border-color);
+    padding-top: 0.75rem;
+    color: var(--bs-secondary-color);
+}
+
 .insights-scroll {
     max-height: 560px;
     overflow-y: auto;
@@ -135,4 +282,108 @@ body {
 [data-bs-theme="dark"] .prob-mid {
     background-color: #032830;
     color: #6edff6;
+}
+
+/* Market Movers Section */
+#market-movers {
+    animation: fadeIn 0.3s ease-in;
+}
+
+@keyframes fadeIn {
+    from {
+        opacity: 0;
+        transform: translateY(10px);
+    }
+
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+.digest-list-card {
+    transition: all 0.2s ease;
+}
+
+.digest-list-card:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+}
+
+/* Top Gainers Styling */
+#catchup-gainers .digest-list-card {
+    border-left: 3px solid #198754;
+}
+
+#catchup-gainers .card-title {
+    color: #198754;
+    font-weight: 600;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+#catchup-gainers .card-title::before {
+    content: "📈";
+    font-size: 1.2em;
+}
+
+/* Top Losers Styling */
+#catchup-losers .digest-list-card {
+    border-left: 3px solid #dc3545;
+}
+
+#catchup-losers .card-title {
+    color: #dc3545;
+    font-weight: 600;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+#catchup-losers .card-title::before {
+    content: "📉";
+    font-size: 1.2em;
+}
+
+/* Dark theme adjustments */
+[data-bs-theme="dark"] #catchup-gainers .digest-list-card {
+    border-left-color: #198754;
+    background: linear-gradient(to right, rgba(25, 135, 84, 0.05) 0%, transparent 100%);
+}
+
+[data-bs-theme="dark"] #catchup-gainers .card-title {
+    color: #75b798;
+}
+
+[data-bs-theme="dark"] #catchup-losers .digest-list-card {
+    border-left-color: #dc3545;
+    background: linear-gradient(to right, rgba(220, 53, 69, 0.05) 0%, transparent 100%);
+}
+
+[data-bs-theme="dark"] #catchup-losers .card-title {
+    color: #ea868f;
+}
+
+/* Enhanced digest list items */
+.digest-list li {
+    transition: background-color 0.15s ease;
+}
+
+.digest-list li:hover {
+    background-color: rgba(13, 110, 253, 0.05);
+    padding-left: 0.5rem;
+    margin-left: -0.5rem;
+    border-radius: 0.25rem;
+}
+
+/* Market Movers Summary */
+#catchup-summary .digest-summary {
+    margin-bottom: 1.5rem;
+}
+
+#catchup-range {
+    font-weight: 500;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
 }

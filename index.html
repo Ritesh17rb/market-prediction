@@ -51,7 +51,7 @@
       <p class="mb-2">Turn prediction market signals into decision-ready intelligence.</p>
       <ul class="mb-0">
         <li>Use markets as a faster-than-news indicator with clear probabilities.</li>
-        <li>Filter noise with semantic clustering across Manifold and Metaculus.</li>
+        <li>Filter noise with semantic clustering across Manifold markets.</li>
         <li>Spot consensus, contradictions, and uncertainty to power an automated risk monitor.</li>
       </ul>
     </div>
@@ -118,19 +118,13 @@ Each item must include:
     <div class="card mb-4">
       <div class="card-body">
         <div class="row g-3 align-items-end">
-          <div class="col-md-4">
-            <label class="form-label">Data Source</label>
-            <div class="btn-group w-100" role="group">
-              <input type="radio" class="btn-check" name="source" id="source-manifold" value="manifold" checked>
-              <label class="btn btn-outline-secondary" for="source-manifold">Manifold</label>
-              <input type="radio" class="btn-check" name="source" id="source-metaculus" value="metaculus">
-              <label class="btn btn-outline-secondary" for="source-metaculus">Metaculus</label>
-            </div>
+          <div class="col-md-3">
+            <input type="number" class="form-control" id="lookback-days" min="1" max="30" value="7"
+              aria-label="Lookback days" placeholder="Lookback days">
           </div>
-          <div class="col-md-6">
-            <label class="form-label">Search</label>
+          <div class="col-md-7">
             <input type="text" class="form-control" id="query-input"
-              placeholder="Search markets (e.g. 'nuclear energy')...">
+              placeholder="Search markets (e.g. 'nuclear energy')..." aria-label="Search markets">
           </div>
           <div class="col-md-2">
             <button id="btn-fetch" class="btn btn-primary w-100">Fetch</button>
@@ -144,14 +138,47 @@ Each item must include:
       <!-- Populated by JS -->
     </div>
 
+    <!-- Market Movers Section -->
+    <div id="market-movers" class="mb-4">
+      <div class="card">
+        <div class="card-body">
+          <div id="catchup-summary">
+            <!-- Summary will be populated by JS -->
+          </div>
+          <div id="catchup-range" class="text-muted small mb-3">
+            <!-- Date range will be populated by JS -->
+          </div>
+
+          <!-- Biggest Movers Grid -->
+          <div id="catchup-movers" class="row g-3 mb-4">
+            <!-- Biggest movers cards will be populated by JS -->
+          </div>
+
+          <!-- Top Gainers and Top Losers Side by Side -->
+          <div class="row g-3">
+            <div class="col-md-6">
+              <div id="catchup-gainers">
+                <!-- Top gainers list will be populated by JS -->
+              </div>
+            </div>
+            <div class="col-md-6">
+              <div id="catchup-losers">
+                <!-- Top losers list will be populated by JS -->
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
     <!-- Insights Section (Response Container) -->
     <div id="market-insights" class="mb-4">
       <div class="accordion" id="insights-accordion">
         <div class="accordion-item">
           <h2 class="accordion-header" id="insights-heading">
-            <button class="accordion-button" type="button" data-bs-toggle="collapse"
-              data-bs-target="#insights-collapse" aria-expanded="true" aria-controls="insights-collapse">
-              <i class="bi bi-stars me-2"></i>AI Analyst Report
+            <button class="accordion-button" type="button" data-bs-toggle="collapse" data-bs-target="#insights-collapse"
+              aria-expanded="true" aria-controls="insights-collapse">
+              <i class="bi bi-stars me-2"></i>Key Insights
             </button>
           </h2>
           <div id="insights-collapse" class="accordion-collapse collapse show" data-bs-parent="#insights-accordion">
@@ -159,8 +186,8 @@ Each item must include:
               <div id="insights-content">
                 <div class="text-center py-5 text-muted">
                   <i class="bi bi-bar-chart-line display-1 mb-3 d-block opacity-25"></i>
-                  <h4 class="fw-light">Ready to analyze market data</h4>
-                  <p>Fetch some markets and click "Run Analysis" to generate deep insights.</p>
+                  <h4 class="fw-light">Hot insights will appear here</h4>
+                  <p>Fetch markets and run analysis to surface the key takeaways.</p>
                 </div>
               </div>
             </div>

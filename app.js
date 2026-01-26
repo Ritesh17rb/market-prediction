@@ -17,7 +17,6 @@ class MarketAnalyzer {
         this.currentSnapshotDate = null;
         this.pastSnapshotDate = null;
         this.marketHistory = new Map();
-        this.feedInsightRequestId = 0;
         this.stats = {
             totalMarkets: 0,
             avgProbability: 0,
@@ -47,16 +46,12 @@ class MarketAnalyzer {
         // LLM Config Save
         document.getElementById('btn-save-llm-config')?.addEventListener('click', () => this.saveLLMConfig());
 
-        const lookbackInput = document.getElementById('lookback-days');
-        if (lookbackInput) {
-            lookbackInput.value = this.lookbackDays;
-            lookbackInput.addEventListener('change', () => {
-                const nextValue = this.normalizeLookbackDays(lookbackInput.value);
-                lookbackInput.value = nextValue;
-                this.lookbackDays = nextValue;
-                localStorage.setItem('lookback_days', String(nextValue));
-                console.log(`Lookback days changed to: ${nextValue}. Refreshing data and charts...`);
-                this.showAlert(`Updating charts for ${nextValue} day lookback period...`, 'info');
+        const lookbackSelect = document.getElementById('lookback-period');
+        if (lookbackSelect) {
+            lookbackSelect.value = this.lookbackDays;
+            lookbackSelect.addEventListener('change', () => {
+                this.lookbackDays = parseInt(lookbackSelect.value) || 7;
+                localStorage.setItem('lookback_days', String(this.lookbackDays));
                 this.fetchMarkets();
             });
         }
@@ -120,29 +115,34 @@ class MarketAnalyzer {
         if (!container) return;
 
         const alertId = 'alert-' + Date.now();
-        const icon = type === 'success' ? 'check-circle-fill' : 'exclamation-triangle-fill';
+        const icons = {
+            success: 'check-circle-fill',
+            info: 'info-circle-fill',
+            warning: 'exclamation-triangle-fill',
+            danger: 'x-circle-fill'
+        };
+        const icon = icons[type] || icons.success;
 
         const html = `
-            <div id="${alertId}" class="toast align-items-center text-bg-${type} border-0 show" role="alert" aria-live="assertive" aria-atomic="true">
-                <div class="d-flex">
-                    <div class="toast-body">
-                        <i class="bi bi-${icon} me-2"></i>${message}
-                    </div>
-                    <button type="button" class="btn-close btn-close-white me-2 m-auto" data-bs-dismiss="toast" aria-label="Close"></button>
+            <div id="${alertId}" class="custom-toast ${type} shadow-lg" role="alert">
+                <div class="toast-content">
+                    <i class="bi bi-${icon} toast-icon"></i>
+                    <span class="toast-message">${message}</span>
                 </div>
+                <button type="button" class="btn-close ms-3" aria-label="Close" onclick="this.parentElement.classList.add('toast-exit'); setTimeout(() => this.parentElement.remove(), 300);"></button>
             </div>
         `;
 
         container.insertAdjacentHTML('beforeend', html);
 
-        // Auto remove after 3 seconds
+        // Auto remove after 3.5 seconds
         setTimeout(() => {
             const el = document.getElementById(alertId);
             if (el) {
-                el.classList.remove('show');
-                setTimeout(() => el.remove(), 150); // Wait for fade out
+                el.classList.add('toast-exit');
+                setTimeout(() => el.remove(), 300);
             }
-        }, 3000);
+        }, 3500);
     }
 
     renderCategoryFilters() {
@@ -203,86 +203,34 @@ class MarketAnalyzer {
         this.activeFetchId = fetchId;
         this.isFetching = true;
 
-        // Reset trend logging flag to show chart data info on each fetch
-        this._trendLogShown = false;
-
-        // Clear State & UI immediately to avoid showing stale data while loading
+        // Clear State & UI
         this.currentMarkets = [];
         this.filteredMarkets = [];
 
         const marketsContainer = document.getElementById('markets-container');
-        if (marketsContainer) {
-            marketsContainer.innerHTML = this.renderMarketSkeletons(6);
-        }
+        if (marketsContainer) marketsContainer.innerHTML = this.renderMarketSkeletons(6);
 
         const insightsContent = document.getElementById('insights-content');
-        if (insightsContent) {
-            insightsContent.innerHTML = `
-                <div class="row g-3">
-                  ${Array(6).fill(0).map(() => `
-                    <div class="col-md-6 col-lg-4 fade-in">
-                      <div class="card h-100 demo-card">
-                        <div class="card-body">
-                          <div class="d-flex justify-content-between align-items-start mb-3 placeholder-glow">
-                            <span class="placeholder col-4"></span>
-                            <span class="placeholder col-3"></span>
-                          </div>
-                          <div class="placeholder-glow mb-3">
-                            <span class="placeholder col-12"></span>
-                            <span class="placeholder col-9"></span>
-                          </div>
-                          <div class="d-flex justify-content-between align-items-center placeholder-glow">
-                            <span class="placeholder col-4"></span>
-                            <span class="placeholder col-4"></span>
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                  `).join('')}
-                </div>
-            `;
-        }
+        if (insightsContent) insightsContent.innerHTML = this.renderInsightsSkeleton();
 
         const statsContainer = document.getElementById('stats-container');
-        if (statsContainer) {
-            statsContainer.innerHTML = Array(4).fill(0).map(() => `
-                <div class="col-md-3">
-                    <div class="card h-100 text-center p-3 border-light-subtle">
-                        <div class="h2 mb-0 placeholder-glow">
-                            <span class="placeholder col-4 text-secondary"></span>
-                        </div>
-                        <small class="text-muted text-uppercase placeholder-glow">
-                            <span class="placeholder col-6"></span>
-                        </small>
-                    </div>
-                </div>
-            `).join('');
-        }
+        if (statsContainer) statsContainer.innerHTML = this.renderStatsSkeleton();
 
         this.showLoading(true);
 
         try {
-            const snapshots = await this.loadSnapshots();
+            // 1. Fetch Live Data
             const liveMarkets = await this.fetchManifoldMarkets(query);
             const currentSnapshot = this.buildSnapshotFromLive(liveMarkets);
-            const mergedSnapshots = this.mergeSnapshots(snapshots, currentSnapshot);
-            this.saveSnapshots(mergedSnapshots);
 
-            let { pastSnapshot } = this.selectSnapshots(mergedSnapshots, this.lookbackDays);
+            // 2. Fetch Historical Data directly from API (Purely Stateless)
+            const pastSnapshot = await this.backfillHistory(liveMarkets, this.lookbackDays);
 
-            // AUTO-ADJUSTMENT: If we lack local history, try to fetch it from API
-            if (!pastSnapshot && this.lookbackDays > 0) {
-                this.showAlert('Fetching historical data from Manifold...', 'info');
-                const backfilled = await this.backfillHistory(liveMarkets, this.lookbackDays);
-                if (backfilled) {
-                    pastSnapshot = backfilled;
-                    // Inject into merged snapshots so graphs work
-                    mergedSnapshots.push(backfilled);
-                    mergedSnapshots.sort((a, b) => new Date(a.date) - new Date(b.date));
-                }
-            }
+            // 3. Construct 2-point history (Then vs Now)
+            const syntheticSnapshots = [currentSnapshot];
+            if (pastSnapshot) syntheticSnapshots.unshift(pastSnapshot);
 
-            this.marketHistory = this.buildMarketHistory(mergedSnapshots, currentSnapshot.date, this.lookbackDays);
+            this.marketHistory = this.buildMarketHistory(syntheticSnapshots, currentSnapshot.date, this.lookbackDays);
 
             this.currentSnapshotDate = currentSnapshot.date;
             this.pastSnapshotDate = pastSnapshot?.date || null;
@@ -297,13 +245,12 @@ class MarketAnalyzer {
             this.displayStats();
             this.showInsightsSection(true);
             this.isFetching = false;
-            this.generateInsights(true, fetchId); // Auto-generate insights (silent mode)
+            this.generateInsights(true, fetchId);
+
         } catch (error) {
             this.showError(`Error fetching data: ${error.message}`);
         } finally {
-            if (this.activeFetchId === fetchId) {
-                this.isFetching = false;
-            }
+            if (this.activeFetchId === fetchId) this.isFetching = false;
             this.showLoading(false);
         }
     }
@@ -326,6 +273,44 @@ class MarketAnalyzer {
                             <span class="placeholder col-4"></span>
                         </div>
                     </div>
+                </div>
+            </div>
+        `).join('');
+    }
+
+    renderInsightsSkeleton() {
+        return `
+            <div class="row g-3">
+              ${Array(3).fill(0).map(() => `
+                <div class="col-md-4 fade-in">
+                  <div class="card h-100 p-3 demo-card">
+                    <div class="card-body">
+                      <div class="d-flex justify-content-between align-items-start mb-3 placeholder-glow">
+                        <span class="placeholder col-4"></span>
+                        <span class="placeholder col-3"></span>
+                      </div>
+                      <div class="placeholder-glow mb-3">
+                        <span class="placeholder col-12"></span>
+                        <span class="placeholder col-9"></span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              `).join('')}
+            </div>
+        `;
+    }
+
+    renderStatsSkeleton() {
+        return Array(4).fill(0).map(() => `
+            <div class="col-md-3">
+                <div class="card h-100 text-center p-3 border-light-subtle">
+                    <div class="h2 mb-0 placeholder-glow">
+                        <span class="placeholder col-4 text-secondary"></span>
+                    </div>
+                    <small class="text-muted text-uppercase placeholder-glow">
+                        <span class="placeholder col-6"></span>
+                    </small>
                 </div>
             </div>
         `).join('');
@@ -366,78 +351,22 @@ class MarketAnalyzer {
         }
     }
 
-    mergeSnapshots(existingSnapshots, currentSnapshot) {
-        const combined = this.mergeSnapshotArrays(existingSnapshots, [currentSnapshot]);
-        return combined.slice(-120);
-    }
-
-    mergeSnapshotArrays(primary, secondary) {
-        const byDate = new Map();
-        [...primary, ...secondary].forEach(snapshot => {
-            if (snapshot?.date && Array.isArray(snapshot?.markets)) {
-                byDate.set(snapshot.date, snapshot);
-            }
-        });
-        return Array.from(byDate.values()).sort((a, b) => new Date(a.date) - new Date(b.date));
-    }
-
-    pruneSnapshots(snapshots) {
-        const cleaned = snapshots.filter(snapshot => {
-            if (!snapshot?.date || !Array.isArray(snapshot?.markets) || snapshot.markets.length === 0) {
-                return false;
-            }
-            return snapshot.markets.every(market => {
-                const url = market?.url || '';
-                return market?.id && !/manifold\.markets\/example/i.test(url);
-            });
-        });
-        return cleaned.slice(-120);
-    }
-
     loadLookbackDays() {
         const raw = localStorage.getItem('lookback_days');
-        return this.normalizeLookbackDays(raw ?? 7);
+        const parsed = parseInt(raw);
+        return isNaN(parsed) ? 7 : Math.min(Math.max(parsed, 1), 365);
     }
 
-    normalizeLookbackDays(value) {
-        const parsed = Number.parseInt(value, 10);
-        if (Number.isNaN(parsed)) return 7;
-        return Math.min(Math.max(parsed, 1), 30);
-    }
-
-    buildMarketHistory(snapshots, endDate, lookbackDays = 7) {
+    buildMarketHistory(snapshots) {
         const history = new Map();
-        if (!snapshots.length) return history;
-
-        const end = new Date(endDate);
-        const start = new Date(endDate);
-        start.setDate(start.getDate() - lookbackDays);
-
-        console.log(`Building market history: ${lookbackDays} days lookback`);
-        console.log(`Date range: ${start.toLocaleDateString()} to ${end.toLocaleDateString()}`);
-        console.log(`Total snapshots available: ${snapshots.length}`);
-
-        const filtered = snapshots
-            .filter(snapshot => {
-                const ts = new Date(snapshot.date);
-                return ts >= start && ts <= end;
-            })
-            .sort((a, b) => new Date(a.date) - new Date(b.date));
-
-        console.log(`Snapshots within lookback period: ${filtered.length}`);
-
-        filtered.forEach(snapshot => {
+        snapshots.forEach(snapshot => {
             const ts = new Date(snapshot.date).getTime();
             snapshot.markets.forEach(market => {
                 if (!market?.id || typeof market.probability !== 'number') return;
-                if (!history.has(market.id)) {
-                    history.set(market.id, []);
-                }
+                if (!history.has(market.id)) history.set(market.id, []);
                 history.get(market.id).push({ ts, p: market.probability });
             });
         });
-
-        console.log(`Market history built for ${history.size} unique markets`);
         return history;
     }
 
@@ -454,12 +383,6 @@ class MarketAnalyzer {
             totalSwing += Math.abs((series[i].p - series[i - 1].p) * 100);
         }
         const avgSwing = totalSwing / Math.max(series.length - 1, 1);
-
-        // Log first market trend calculation to verify data points
-        if (!this._trendLogShown) {
-            console.log(`Chart data example - Market ${marketId}: ${series.length} data points over ${this.lookbackDays} days`);
-            this._trendLogShown = true;
-        }
 
         return {
             series,
@@ -488,37 +411,6 @@ class MarketAnalyzer {
                 <polyline fill="none" stroke="currentColor" stroke-width="2" points="${points}"></polyline>
             </svg>
         `;
-    }
-
-    selectSnapshots(snapshots, lookbackDays = 7) {
-        if (!snapshots.length) return { pastSnapshot: null };
-
-        const sorted = [...snapshots].sort((a, b) => new Date(a.date) - new Date(b.date));
-        const currentSnapshot = sorted[sorted.length - 1];
-        const targetDate = new Date(currentSnapshot.date);
-        targetDate.setDate(targetDate.getDate() - lookbackDays);
-
-        let pastSnapshot = null;
-        for (const snapshot of sorted) {
-            const snapshotDate = new Date(snapshot.date);
-            if (snapshotDate <= targetDate) {
-                pastSnapshot = snapshot;
-            }
-        }
-
-        if (!pastSnapshot && sorted.length > 1) {
-            pastSnapshot = sorted[0];
-        }
-
-        if (pastSnapshot) {
-            const diffMs = new Date(currentSnapshot.date) - new Date(pastSnapshot.date);
-            const diffDays = diffMs / (1000 * 60 * 60 * 24);
-            if (diffDays > lookbackDays * 2) {
-                pastSnapshot = null;
-            }
-        }
-
-        return { pastSnapshot };
     }
 
     async backfillHistory(markets, days) {
@@ -553,15 +445,30 @@ class MarketAnalyzer {
 
     async fetchHistoricalProbability(marketId, timestamp) {
         try {
-            // Manifold API: Get last bet before timestamp
-            const url = `https://api.manifold.markets/v0/bets?contractId=${marketId}&limit=1&before=${timestamp}`;
-            const response = await fetch(url);
-            if (!response.ok) return null;
-            const bets = await response.json();
+            // Using correct timestamp filtering parameters: 'afterTime' and 'beforeTime'
+            // The 'before' and 'after' parameters are for Bet IDs, which caused 404s.
+            let url = `https://api.manifold.markets/v0/bets?contractId=${marketId}&afterTime=${timestamp}&limit=1&order=asc`;
+            let response = await fetch(url);
 
-            if (Array.isArray(bets) && bets.length > 0) {
-                return bets[0].probAfter;
+            if (response.ok) {
+                const bets = await response.json();
+                if (Array.isArray(bets) && bets.length > 0) {
+                    return bets[0].probBefore;
+                }
             }
+
+            // Fallback: Get most recent bet BEFORE timestamp
+            url = `https://api.manifold.markets/v0/bets?contractId=${marketId}&beforeTime=${timestamp}&limit=1&order=desc`;
+            response = await fetch(url);
+
+            if (response.ok) {
+                const bets = await response.json();
+                if (Array.isArray(bets) && bets.length > 0) {
+                    return bets[0].probAfter;
+                }
+            }
+
+            // If no bets found, data essentially hasn't changed or market didn't exist
             return null;
         } catch (error) {
             console.warn(`Failed to fetch history for ${marketId}`, error);
@@ -716,7 +623,6 @@ class MarketAnalyzer {
     }
 
     extractTags(text) {
-        // ... (unchanged)
         const tags = [];
         const lowerText = text.toLowerCase();
 
@@ -744,7 +650,6 @@ class MarketAnalyzer {
     }
 
     filterMarkets(searchQuery = '') {
-        // ... (Logic unchanged, re-included to maintain block)
         this.filteredMarkets = this.currentMarkets.filter(market => {
             const matchesSearch = !searchQuery ||
                 market.question.toLowerCase().includes(searchQuery.toLowerCase());
@@ -782,10 +687,7 @@ class MarketAnalyzer {
         }, 1000);
     }
 
-    // ... calculateStats and displayStats match logic/structure
-
     calculateStats() {
-        // ... unchanged logic
         const markets = this.filteredMarkets;
         this.stats.totalMarkets = markets.length;
         if (markets.length > 0) {
@@ -847,8 +749,6 @@ class MarketAnalyzer {
         container.innerHTML = this.filteredMarkets.map((market, index) =>
             this.createMarketCard(market, index)
         ).join('');
-
-        this.enrichMarketFeedWithInsights();
     }
 
     createMarketCard(market, index) {
@@ -900,9 +800,6 @@ class MarketAnalyzer {
                 <span><i class="bi bi-calendar me-1"></i> ${dateStr}</span>
             </div>
             `}
-            <div class="feed-insight mt-3">
-                <p class="mb-0 small text-muted feed-insight-text">AI Analyst Report loading...</p>
-            </div>
           </div>
         </div>
       </div>
@@ -929,78 +826,7 @@ class MarketAnalyzer {
         `;
     }
 
-    async enrichMarketFeedWithInsights() {
-        if (!this.llmConfig.baseUrl || !this.llmConfig.apiKey) return;
 
-        const requestId = ++this.feedInsightRequestId;
-        const targets = this.filteredMarkets;
-        if (!targets.length) return;
-
-        const insights = await this.generateMarketCardInsights(targets);
-        if (!insights || requestId !== this.feedInsightRequestId) return;
-
-        targets.forEach(market => {
-            const insight = insights[market.id];
-            if (!insight) return;
-            const card = document.querySelector(`[data-market-id="${market.id}"] .feed-insight`);
-            if (card) {
-                card.innerHTML = `<p class="mb-0 small feed-insight-text">${insight.summary || insight.description}</p>`;
-            }
-        });
-    }
-
-    async generateMarketCardInsights(markets) {
-        const systemPrompt = 'You are a prediction market analyst writing crisp, one-sentence insights for a news feed.';
-        const payload = markets.map(market => {
-            const trend = this.getMarketTrendInfo(market.id);
-            return {
-                id: market.id,
-                question: market.question,
-                current: Math.round(market.probability * 100),
-                delta: trend ? Math.round(trend.delta) : null
-            };
-        });
-
-        const userPrompt = `
-Write one sentence per market that explains the move in plain language.
-If delta is null, summarize the current probability instead.
-
-Return ONLY a raw JSON object with market ids as keys:
-{
-  "market-id": { "summary": "..." }
-}
-
-Markets:
-${JSON.stringify(payload)}
-`;
-
-        try {
-            const response = await fetch(`${this.llmConfig.baseUrl}/chat/completions`, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${this.llmConfig.apiKey}`
-                },
-                body: JSON.stringify({
-                    model: this.llmConfig.model || 'gpt-5-nano',
-                    messages: [
-                        { role: 'system', content: systemPrompt },
-                        { role: 'user', content: userPrompt }
-                    ],
-                    temperature: 0.7
-                })
-            });
-
-            if (!response.ok) return null;
-            const data = await response.json();
-            const content = data.choices?.[0]?.message?.content;
-            if (!content) return null;
-            return this.parseLLMResponse(content);
-        } catch (error) {
-            console.warn('Market feed insight generation failed.', error);
-            return null;
-        }
-    }
 
     async renderCatchupDigest(currentSnapshot, pastSnapshot, query) {
         const summaryEl = document.getElementById('catchup-summary');
@@ -1181,7 +1007,7 @@ Summarize the most important move for each market in 1-2 sentences. Explain the 
 
 Return ONLY a raw JSON object with market ids as keys:
 {
-  \"market-id\": { \"summary\": \"...\" }
+  "market-id": { "summary": "..." }
 }
 
 Markets:
@@ -1357,7 +1183,6 @@ ${JSON.stringify(movers.map(m => ({
         }
     }
 
-    // NEW FUNCTION: Chat with LLM
     parseLLMResponse(content) {
         const fenced = content.match(/```json\s*([\s\S]*?)\s*```/i);
         const arrayMatch = content.match(/\[[\s\S]*\]/);
@@ -1385,8 +1210,7 @@ ${JSON.stringify(movers.map(m => ({
     }
 
     async generateLLMInsights(markets) {
-        const systemPrompt = document.getElementById('system-prompt')?.value ||
-            'You are a prediction market intelligence analyst.';
+        const systemPrompt = document.getElementById('system-prompt')?.value || 'You are a prediction market intelligence analyst.';
         const currentModel = document.getElementById('model-select')?.value;
 
         const userPrompt = `
@@ -1444,66 +1268,6 @@ Output format:
         }
     }
 
-    generateLocalInsights(markets) {
-        const insights = [];
-
-        // Category distribution
-        const categoryCount = {};
-        markets.forEach(m => {
-            m.tags.forEach(tag => {
-                categoryCount[tag] = (categoryCount[tag] || 0) + 1;
-            });
-        });
-
-        const topCategory = Object.entries(categoryCount)
-            .sort((a, b) => b[1] - a[1])[0];
-
-        if (topCategory) {
-            insights.push({
-                title: 'Market Focus: ' + topCategory[0],
-                description: `${topCategory[0]} is the dominant theme with ${topCategory[1]} active markets. Traders are heavily focused on this sector right now.`
-            });
-        }
-
-        // High confidence predictions
-        const highConfidence = markets.filter(m => m.probability > 70 || m.probability < 30);
-        if (highConfidence.length > 0) {
-            insights.push({
-                title: 'Consensus Signals',
-                description: `${highConfidence.length} markets show strong crowd consensus (>70% or <30%). These represent "settled" narratives in the eyes of the market.`
-            });
-        }
-
-        // Participation analysis
-        const avgParticipants = markets.reduce((sum, m) => sum + m.participants, 0) / markets.length;
-        const highParticipation = markets.filter(m => m.participants > avgParticipants * 1.5);
-
-        if (highParticipation.length > 0) {
-            insights.push({
-                title: 'Hot Topics',
-                description: `${highParticipation.length} viral markets are seeing >50% above-average participation. The crowd is flocking to these specific questions.`
-            });
-        }
-
-        // Probability distribution
-        const avgProb = markets.reduce((sum, m) => sum + m.probability, 0) / markets.length;
-        insights.push({
-            title: 'Global Sentiment',
-            description: `The aggregate probability across all visible markets is ${Math.round(avgProb * 100)}%. This indicates a ${avgProb > 0.5 ? 'bullish/optimistic' : 'bearish/cautious'} bias in the current feed.`
-        });
-
-        // Controversial markets (close to 50%)
-        const controversial = markets.filter(m => m.probability > 0.4 && m.probability < 0.6);
-        if (controversial.length > 0) {
-            insights.push({
-                title: 'Controversial Predictions',
-                description: `${controversial.length} markets are highly contested with probabilities near 50%, representing genuine uncertainty and divided opinions.`
-            });
-        }
-
-        return insights;
-    }
-
     exportFeed() {
         const feedData = {
             generated: new Date().toISOString(),
@@ -1556,7 +1320,6 @@ Output format:
             `;
         }
     }
-
 }
 
 // Initialize the application when DOM is ready

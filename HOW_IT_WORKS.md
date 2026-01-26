@@ -267,7 +267,6 @@ Map {
 ---
 
 ## ⚙️ Configuration
-
 ### **Lookback Period**
 - Default: 7 days
 - Range: 1-30 days

@@ -9,7 +9,6 @@ class MarketAnalyzer {
         this.currentSource = 'manifold';
         this.fetchCounter = 0;
         this.activeFetchId = 0;
-        this.activeInsightId = 0;
         this.isFetching = false;
         this.snapshots = [];
         this.localSnapshotKey = 'market_snapshots_v1';
@@ -23,34 +22,27 @@ class MarketAnalyzer {
             highConfidence: 0,
             trending: 0
         };
-        // LLM Configuration
-        this.llmConfig = {
-            baseUrl: localStorage.getItem('llm_base_url') || '',
-            model: localStorage.getItem('llm_model') || '',
-            apiKey: localStorage.getItem('llm_api_key') || ''
-        };
     }
 
     async initialize() {
         this.setupEventListeners();
         this.renderCategoryFilters();
-        this.loadLLMConfigUI(); // Load saved config into UI
-        await this.fetchMarkets();
+        const marketMovers = document.getElementById('market-movers');
+        if (marketMovers) {
+            marketMovers.classList.add('d-none');
+        }
     }
 
     setupEventListeners() {
         document.getElementById('btn-fetch')?.addEventListener('click', () => this.fetchMarkets());
-        document.getElementById('btn-generate-insights')?.addEventListener('click', () => this.generateInsights());
         document.getElementById('btn-export-feed')?.addEventListener('click', () => this.exportFeed());
-
-        // LLM Config Save
-        document.getElementById('btn-save-llm-config')?.addEventListener('click', () => this.saveLLMConfig());
 
         const lookbackSelect = document.getElementById('lookback-period');
         if (lookbackSelect) {
-            lookbackSelect.value = this.lookbackDays;
+            lookbackSelect.value = String(this.lookbackDays);
             lookbackSelect.addEventListener('change', () => {
-                this.lookbackDays = parseInt(lookbackSelect.value) || 7;
+                const nextValue = parseInt(lookbackSelect.value, 10);
+                this.lookbackDays = Number.isFinite(nextValue) ? nextValue : 10;
                 localStorage.setItem('lookback_days', String(this.lookbackDays));
                 this.fetchMarkets();
             });
@@ -67,47 +59,6 @@ class MarketAnalyzer {
                 }, 500);
             });
         }
-    }
-
-    loadLLMConfigUI() {
-        // Load Base URL and API Key into Modal Inputs
-        const urlInput = document.getElementById('llm-base-url');
-        const keyInput = document.getElementById('llm-api-key');
-
-        if (urlInput) urlInput.value = this.llmConfig.baseUrl || 'https://api.openai.com/v1';
-        if (keyInput) keyInput.value = this.llmConfig.apiKey;
-
-        // Load Model into Inline Input
-        const modelInput = document.getElementById('model-select');
-        if (modelInput) modelInput.value = this.llmConfig.model || 'gpt-5-nano';
-    }
-
-    saveLLMConfig() {
-        const url = document.getElementById('llm-base-url').value.trim();
-        const key = document.getElementById('llm-api-key').value.trim();
-
-        // Note: Model is now read directly from the inline input during generation,
-        // but we save the modal values (URL/Key) here.
-        // We also update the local config with value from the inline input just to be safe.
-        const model = document.getElementById('model-select')?.value.trim() || 'gpt-5-nano';
-
-        if (!url || !key) {
-            this.showAlert('Please fill in Base URL and API Key', 'danger');
-            return;
-        }
-
-        localStorage.setItem('llm_base_url', url);
-        localStorage.setItem('llm_api_key', key);
-        localStorage.setItem('llm_model', model);
-
-        this.llmConfig = { baseUrl: url, model: model, apiKey: key };
-
-        // Hide modal
-        const modalEl = document.getElementById('llmConfigModal');
-        const modal = bootstrap.Modal.getInstance(modalEl);
-        if (modal) modal.hide();
-
-        this.showAlert('API Configuration Saved!', 'success');
     }
 
     showAlert(message, type = 'success') {
@@ -210,11 +161,27 @@ class MarketAnalyzer {
         const marketsContainer = document.getElementById('markets-container');
         if (marketsContainer) marketsContainer.innerHTML = this.renderMarketSkeletons(6);
 
-        const insightsContent = document.getElementById('insights-content');
-        if (insightsContent) insightsContent.innerHTML = this.renderInsightsSkeleton();
-
         const statsContainer = document.getElementById('stats-container');
         if (statsContainer) statsContainer.innerHTML = this.renderStatsSkeleton();
+
+        const marketMovers = document.getElementById('market-movers');
+        if (marketMovers) {
+            marketMovers.classList.remove('d-none');
+        }
+
+        const catchupSummary = document.getElementById('catchup-summary');
+        const catchupRange = document.getElementById('catchup-range');
+        const catchupMovers = document.getElementById('catchup-movers');
+        const catchupGainers = document.getElementById('catchup-gainers');
+        const catchupLosers = document.getElementById('catchup-losers');
+
+        if (catchupSummary && catchupRange && catchupMovers && catchupGainers && catchupLosers) {
+            catchupSummary.innerHTML = this.renderCatchupSummarySkeleton();
+            catchupRange.innerHTML = this.renderCatchupRangeSkeleton();
+            catchupMovers.innerHTML = this.renderCatchupMoversSkeleton(6);
+            catchupGainers.innerHTML = this.renderCatchupListSkeleton();
+            catchupLosers.innerHTML = this.renderCatchupListSkeleton();
+        }
 
         this.showLoading(true);
 
@@ -222,15 +189,31 @@ class MarketAnalyzer {
             // 1. Fetch Live Data
             const liveMarkets = await this.fetchManifoldMarkets(query);
             const currentSnapshot = this.buildSnapshotFromLive(liveMarkets);
+            const snapshots = await this.loadSnapshots();
+            const merged = this.mergeSnapshotArrays(snapshots, [currentSnapshot]);
+            const cleaned = this.pruneSnapshots(merged);
+            this.saveSnapshots(cleaned);
+            this.snapshots = cleaned;
 
-            // 2. Fetch Historical Data directly from API (Purely Stateless)
-            const pastSnapshot = await this.backfillHistory(liveMarkets, this.lookbackDays);
+            const targetTime = new Date(currentSnapshot.date).getTime() - (this.lookbackDays * 24 * 60 * 60 * 1000);
+            let windowSnapshots = cleaned
+                .filter(snapshot => new Date(snapshot.date).getTime() >= targetTime)
+                .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
 
-            // 3. Construct 2-point history (Then vs Now)
-            const syntheticSnapshots = [currentSnapshot];
-            if (pastSnapshot) syntheticSnapshots.unshift(pastSnapshot);
+            let pastSnapshot = this.findClosestSnapshot(cleaned, targetTime);
+            if (!pastSnapshot) {
+                pastSnapshot = await this.backfillHistory(liveMarkets, this.lookbackDays);
+            }
 
-            this.marketHistory = this.buildMarketHistory(syntheticSnapshots, currentSnapshot.date, this.lookbackDays);
+            const seriesSnapshots = await this.backfillHistorySeries(liveMarkets, this.lookbackDays, new Date(currentSnapshot.date).getTime());
+            windowSnapshots = this.mergeSnapshotArrays(seriesSnapshots, windowSnapshots)
+                .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+
+            if (pastSnapshot && !windowSnapshots.some(snapshot => snapshot.date === pastSnapshot.date)) {
+                windowSnapshots.unshift(pastSnapshot);
+            }
+
+            this.marketHistory = this.buildMarketHistory(windowSnapshots);
 
             this.currentSnapshotDate = currentSnapshot.date;
             this.pastSnapshotDate = pastSnapshot?.date || null;
@@ -243,9 +226,7 @@ class MarketAnalyzer {
             this.calculateStats();
             this.displayMarkets();
             this.displayStats();
-            this.showInsightsSection(true);
             this.isFetching = false;
-            this.generateInsights(true, fetchId);
 
         } catch (error) {
             this.showError(`Error fetching data: ${error.message}`);
@@ -278,29 +259,6 @@ class MarketAnalyzer {
         `).join('');
     }
 
-    renderInsightsSkeleton() {
-        return `
-            <div class="row g-3">
-              ${Array(3).fill(0).map(() => `
-                <div class="col-md-4 fade-in">
-                  <div class="card h-100 p-3 demo-card">
-                    <div class="card-body">
-                      <div class="d-flex justify-content-between align-items-start mb-3 placeholder-glow">
-                        <span class="placeholder col-4"></span>
-                        <span class="placeholder col-3"></span>
-                      </div>
-                      <div class="placeholder-glow mb-3">
-                        <span class="placeholder col-12"></span>
-                        <span class="placeholder col-9"></span>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              `).join('')}
-            </div>
-        `;
-    }
-
     renderStatsSkeleton() {
         return Array(4).fill(0).map(() => `
             <div class="col-md-3">
@@ -314,6 +272,65 @@ class MarketAnalyzer {
                 </div>
             </div>
         `).join('');
+    }
+
+    renderCatchupSummarySkeleton() {
+        return `
+            <div class="placeholder-glow">
+                <span class="placeholder col-3"></span>
+                <span class="placeholder col-8 d-block mt-2"></span>
+            </div>
+        `;
+    }
+
+    renderCatchupRangeSkeleton() {
+        return `
+            <div class="placeholder-glow">
+                <span class="placeholder col-4"></span>
+            </div>
+        `;
+    }
+
+    renderCatchupMoversSkeleton(count = 6) {
+        return Array(count).fill(0).map(() => `
+            <div class="col-md-6 col-lg-4">
+                <div class="card h-100 demo-card">
+                    <div class="card-body">
+                        <div class="placeholder-glow mb-2">
+                            <span class="placeholder col-4"></span>
+                            <span class="placeholder col-3 ms-2"></span>
+                        </div>
+                        <div class="placeholder-glow mb-3">
+                            <span class="placeholder col-12"></span>
+                            <span class="placeholder col-9"></span>
+                        </div>
+                        <div class="placeholder-glow">
+                            <span class="placeholder col-6"></span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        `).join('');
+    }
+
+    renderCatchupListSkeleton() {
+        return `
+            <div class="card h-100 digest-list-card">
+                <div class="card-body">
+                    <div class="placeholder-glow mb-3">
+                        <span class="placeholder col-5"></span>
+                    </div>
+                    <ul class="list-unstyled digest-list mb-0">
+                        ${Array(3).fill(0).map(() => `
+                            <li class="placeholder-glow">
+                                <span class="placeholder col-8"></span>
+                                <span class="placeholder col-3"></span>
+                            </li>
+                        `).join('')}
+                    </ul>
+                </div>
+            </div>
+        `;
     }
 
     // Skip fetch functions as they are logic only...
@@ -353,8 +370,28 @@ class MarketAnalyzer {
 
     loadLookbackDays() {
         const raw = localStorage.getItem('lookback_days');
-        const parsed = parseInt(raw);
-        return isNaN(parsed) ? 7 : Math.min(Math.max(parsed, 1), 365);
+        const parsed = parseInt(raw, 10);
+        if (!Number.isFinite(parsed)) return 20;
+        return Math.min(Math.max(parsed, 1), 365);
+    }
+
+    mergeSnapshotArrays(primary, secondary) {
+        const merged = new Map();
+        [...primary, ...secondary].forEach(snapshot => {
+            if (!snapshot?.date || !Array.isArray(snapshot?.markets)) return;
+            merged.set(snapshot.date, snapshot);
+        });
+        return Array.from(merged.values());
+    }
+
+    pruneSnapshots(snapshots, maxSnapshots = 120) {
+        const sorted = [...snapshots].sort((a, b) => {
+            const aTime = new Date(a.date).getTime();
+            const bTime = new Date(b.date).getTime();
+            return aTime - bTime;
+        });
+        if (sorted.length <= maxSnapshots) return sorted;
+        return sorted.slice(sorted.length - maxSnapshots);
     }
 
     buildMarketHistory(snapshots) {
@@ -367,7 +404,21 @@ class MarketAnalyzer {
                 history.get(market.id).push({ ts, p: market.probability });
             });
         });
+        history.forEach(series => {
+            series.sort((a, b) => a.ts - b.ts);
+        });
         return history;
+    }
+
+    findClosestSnapshot(snapshots, targetTime) {
+        const candidates = snapshots
+            .map(snapshot => ({
+                snapshot,
+                ts: new Date(snapshot.date).getTime()
+            }))
+            .filter(item => item.ts <= targetTime)
+            .sort((a, b) => b.ts - a.ts);
+        return candidates.length ? candidates[0].snapshot : null;
     }
 
     getMarketTrendInfo(marketId) {
@@ -406,11 +457,57 @@ class MarketAnalyzer {
             return `${x.toFixed(2)},${y.toFixed(2)}`;
         }).join(' ');
 
+        const areaPoints = `0,24 ${points} 100,24`;
+        const lastPoint = points.split(' ').slice(-1)[0] || '';
+        const [lastX, lastY] = lastPoint.split(',').map(Number);
+        const gradientId = `sparkline-grad-${Math.random().toString(36).slice(2, 8)}`;
+        const delta = series[series.length - 1].p - series[0].p;
+        const trendClass = Math.abs(delta) < 0.001
+            ? 'sparkline-neutral'
+            : (delta > 0 ? 'sparkline-up' : 'sparkline-down');
+
         return `
-            <svg class="sparkline ${className}" viewBox="0 0 100 24" preserveAspectRatio="none" aria-hidden="true">
-                <polyline fill="none" stroke="currentColor" stroke-width="2" points="${points}"></polyline>
+            <svg class="sparkline ${trendClass} ${className}" viewBox="0 0 100 24" preserveAspectRatio="none" aria-hidden="true">
+                <defs>
+                    <linearGradient id="${gradientId}" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="0%" stop-color="currentColor" stop-opacity="0.35"></stop>
+                        <stop offset="100%" stop-color="currentColor" stop-opacity="0"></stop>
+                    </linearGradient>
+                </defs>
+                <line class="sparkline-grid" x1="0" y1="2" x2="100" y2="2"></line>
+                <line class="sparkline-grid" x1="0" y1="12" x2="100" y2="12"></line>
+                <line class="sparkline-grid" x1="0" y1="22" x2="100" y2="22"></line>
+                <polyline class="sparkline-area" fill="url(#${gradientId})" stroke="none" points="${areaPoints}"></polyline>
+                <polyline class="sparkline-line" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" points="${points}"></polyline>
+                ${Number.isFinite(lastX) && Number.isFinite(lastY) ? `<circle class="sparkline-dot" cx="${lastX.toFixed(2)}" cy="${lastY.toFixed(2)}" r="1.8"></circle>` : ''}
             </svg>
         `;
+    }
+
+    formatCompactNumber(value) {
+        if (typeof value !== 'number' || !isFinite(value)) return 'n/a';
+        return new Intl.NumberFormat('en', {
+            notation: 'compact',
+            maximumFractionDigits: 1
+        }).format(value);
+    }
+
+    formatOutcomeType(outcomeType) {
+        if (!outcomeType) return 'n/a';
+        return String(outcomeType).replace(/_/g, ' ').toLowerCase();
+    }
+
+    formatDate(value) {
+        if (!value) return 'n/a';
+        const date = new Date(value);
+        if (Number.isNaN(date.getTime())) return 'n/a';
+        return date.toLocaleDateString();
+    }
+
+    normalizeAnswerProbability(value) {
+        if (typeof value !== 'number' || !isFinite(value)) return null;
+        if (value > 1) return value / 100;
+        return Math.min(Math.max(value, 0), 1);
     }
 
     async backfillHistory(markets, days) {
@@ -441,6 +538,38 @@ class MarketAnalyzer {
             date: new Date(targetTime).toISOString(),
             markets: validResults
         };
+    }
+
+    async backfillHistorySeries(markets, days, baseTime = Date.now()) {
+        if (!markets.length) return [];
+        const targets = markets.slice(0, 24);
+        const dayMs = 24 * 60 * 60 * 1000;
+        const snapshots = [];
+        const lastKnown = new Map();
+
+        for (let offset = days; offset >= 1; offset -= 1) {
+            const timestamp = baseTime - (offset * dayMs);
+            const results = await Promise.all(targets.map(async (market) => {
+                let prob = await this.fetchHistoricalProbability(market.id, timestamp);
+                if (prob === null && lastKnown.has(market.id)) {
+                    prob = lastKnown.get(market.id);
+                }
+                if (prob === null) return null;
+                const snapshotMarket = this.normalizeSnapshotFromManifold(market);
+                snapshotMarket.probability = prob;
+                lastKnown.set(market.id, prob);
+                return snapshotMarket;
+            }));
+            const validResults = results.filter(m => m !== null);
+            if (validResults.length > 0) {
+                snapshots.push({
+                    date: new Date(timestamp).toISOString(),
+                    markets: validResults
+                });
+            }
+        }
+
+        return snapshots;
     }
 
     async fetchHistoricalProbability(marketId, timestamp) {
@@ -495,8 +624,12 @@ class MarketAnalyzer {
     }
 
     async enrichMarketsWithDetails(markets) {
-        const maxDetailRequests = 15;
-        const detailTargets = markets.filter(market => this.shouldFetchMarketDetails(market)).slice(0, maxDetailRequests);
+        const maxOtherDetailRequests = 15;
+        const detailCandidates = markets.filter(market => this.shouldFetchMarketDetails(market));
+        const multiChoice = detailCandidates.filter(market => market?.outcomeType === 'MULTIPLE_CHOICE');
+        const other = detailCandidates.filter(market => market?.outcomeType !== 'MULTIPLE_CHOICE')
+            .slice(0, maxOtherDetailRequests);
+        const detailTargets = [...multiChoice, ...other];
         if (!detailTargets.length) return markets;
 
         const detailMap = new Map();
@@ -527,7 +660,12 @@ class MarketAnalyzer {
             ? market.answers.map(answer => ({
                 id: answer.id,
                 text: answer.text || answer.name || 'Unknown',
-                probability: typeof answer.probability === 'number' ? answer.probability : null
+                probability: this.normalizeAnswerProbability(
+                    typeof answer.probability === 'number'
+                        ? answer.probability
+                        : (typeof answer.prob === 'number' ? answer.prob : null)
+                ),
+                isResolved: Boolean(answer.isResolved) || Boolean(answer.resolution)
             }))
             : [];
 
@@ -569,7 +707,12 @@ class MarketAnalyzer {
             ? market.answers.map(answer => ({
                 id: answer.id,
                 text: answer.text || answer.name || 'Unknown',
-                probability: typeof answer.probability === 'number' ? answer.probability : null
+                probability: this.normalizeAnswerProbability(
+                    typeof answer.probability === 'number'
+                        ? answer.probability
+                        : (typeof answer.prob === 'number' ? answer.prob : null)
+                ),
+                isResolved: Boolean(answer.isResolved) || Boolean(answer.resolution)
             }))
             : [];
 
@@ -634,7 +777,7 @@ class MarketAnalyzer {
 
         // Keywords for category detection
         const keywords = {
-            'AI': ['artificial intelligence', 'machine learning', 'gpt', 'chatgpt', 'ai', 'llm', 'neural', 'deep learning'],
+            'AI': ['artificial intelligence', 'machine learning', 'gpt', 'chatgpt', 'ai', 'neural', 'deep learning'],
             'Politics': ['election', 'president', 'congress', 'senate', 'political', 'vote', 'government', 'policy'],
             'Economics': ['economy', 'inflation', 'gdp', 'stock', 'market', 'recession', 'bitcoin', 'crypto', 'finance'],
             'Sports': ['nfl', 'nba', 'soccer', 'football', 'championship', 'olympics', 'baseball', 'basketball', 'tennis']
@@ -663,28 +806,6 @@ class MarketAnalyzer {
         this.displayMarkets();
         this.calculateStats();
         this.displayStats();
-
-        if (this.filteredMarkets.length === 0) {
-            const insightsContent = document.getElementById('insights-content');
-            if (insightsContent) {
-                insightsContent.innerHTML = `
-                    <div class="text-center py-5 text-muted">
-                        <i class="bi bi-bar-chart-line display-1 mb-3 d-block opacity-25"></i>
-                        <h4 class="fw-light">Ready to analyze market data</h4>
-                        <p>Fetch some markets and click "Run Analysis" to generate deep insights.</p>
-                    </div>
-                `;
-            }
-            const insightsBody = insightsContent?.closest('.card-body');
-            if (insightsBody) insightsBody.classList.remove('insights-scroll');
-            return;
-        }
-
-        // Debounce automatic insights for search/filtering
-        if (this.insightsDebounce) clearTimeout(this.insightsDebounce);
-        this.insightsDebounce = setTimeout(() => {
-            this.generateInsights(true, this.activeFetchId);
-        }, 1000);
     }
 
     calculateStats() {
@@ -772,6 +893,10 @@ class MarketAnalyzer {
         const volatilityLabel = trendInfo
             ? (trendInfo.avgSwing < 2 ? 'Stable' : trendInfo.avgSwing < 6 ? 'Active' : 'Choppy')
             : null;
+        const statusLabel = market.isResolved ? 'resolved' : 'open';
+        const closeLabel = this.formatDate(market.closeTime);
+        const volumeLabel = this.formatCompactNumber(market.volume);
+        const liquidityLabel = this.formatCompactNumber(market.liquidity);
 
         return `
       <div class="col-md-6 col-lg-4">
@@ -784,6 +909,12 @@ class MarketAnalyzer {
             
             <h6 class="card-title mb-3"><a href="${safeUrl}" target="_blank" rel="noopener" class="text-decoration-none text-reset stretched-link">${market.question}</a></h6>
             ${this.renderAnswerHighlights(market)}
+            <div class="market-meta small text-muted">
+                <div class="market-meta-row"><span>Status</span><span>${statusLabel}</span></div>
+                <div class="market-meta-row"><span>Closes</span><span>${closeLabel}</span></div>
+                <div class="market-meta-row"><span>Volume</span><span>${volumeLabel}</span></div>
+                <div class="market-meta-row"><span>Liquidity</span><span>${liquidityLabel}</span></div>
+            </div>
             ${trendInfo ? `
                 <div class="feed-trend d-flex align-items-center justify-content-between mb-2">
                     <span class="delta-pill ${deltaClass}">${deltaLabel}</span>
@@ -808,14 +939,18 @@ class MarketAnalyzer {
 
     renderAnswerHighlights(market) {
         if (!Array.isArray(market.answers) || market.answers.length === 0) return '';
-        const topAnswers = [...market.answers]
-            .filter(answer => typeof answer.probability === 'number')
-            .sort((a, b) => b.probability - a.probability)
-            .slice(0, 3);
+        const candidates = market.answers
+            .filter(answer => typeof answer.probability === 'number');
+        const unresolved = candidates.filter(answer => !answer.isResolved);
+        const ranked = (unresolved.length ? unresolved : candidates)
+            .slice()
+            .sort((a, b) => b.probability - a.probability);
+        const topAnswers = ranked.slice(0, 3);
         if (!topAnswers.length) return '';
 
         return `
             <div class="answer-highlights mb-2">
+                <div class="small text-muted">Top options</div>
                 ${topAnswers.map(answer => `
                     <div class="answer-row">
                         <span class="answer-text">${answer.text}</span>
@@ -848,7 +983,7 @@ class MarketAnalyzer {
         if (!pastSnapshot) {
             summaryEl.innerHTML = `
                 <div class="alert alert-info border-0">
-                    <strong>Catch-up Engine warming up.</strong> Capture at least two real snapshots within 14 days to compute movers.
+                    <strong>Catch-up Engine warming up.</strong> Capture at least two real snapshots within ${this.lookbackDays} days to compute movers.
                 </div>
             `;
             moversEl.innerHTML = '';
@@ -895,6 +1030,10 @@ class MarketAnalyzer {
         const topMovers = moversSorted.slice(0, 6);
         const topGainers = moversSorted.filter(m => m.delta > 0).slice(0, 6);
         const topLosers = moversSorted.filter(m => m.delta < 0).slice(0, 6);
+        const currentMarketMap = new Map(currentSnapshot.markets.map(market => [market.id, market]));
+        const topMoverMarkets = topMovers
+            .map(mover => currentMarketMap.get(mover.id))
+            .filter(Boolean);
 
         console.log(`Market Movers calculated: ${topGainers.length} gainers, ${topLosers.length} losers (${this.lookbackDays} day period)`);
 
@@ -906,18 +1045,11 @@ class MarketAnalyzer {
             </div>
         `;
 
-        moversEl.innerHTML = topMovers.map(item => this.renderMoverCard(item)).join('');
+        moversEl.innerHTML = topMoverMarkets
+            .map((market, index) => this.createMarketCard(market, index))
+            .join('');
         gainersEl.innerHTML = this.renderMoverList(topGainers, 'Top Gainers');
         losersEl.innerHTML = this.renderMoverList(topLosers, 'Top Losers');
-
-        const insights = await this.generateMoverInsights(topMovers);
-        if (insights) {
-            const enriched = topMovers.map(item => ({
-                ...item,
-                insight: insights[item.id]
-            }));
-            moversEl.innerHTML = enriched.map(item => this.renderMoverCard(item)).join('');
-        }
     }
 
     renderMoverCard(item) {
@@ -926,7 +1058,6 @@ class MarketAnalyzer {
         const deltaLabel = delta >= 0 ? `+${delta}` : `${delta}`;
         const current = Math.round(item.current * 100);
         const past = Math.round(item.past * 100);
-        const insightText = item.insight?.description || item.insight?.summary;
         const trend = item.trend;
 
         return `
@@ -948,9 +1079,6 @@ class MarketAnalyzer {
                         <div class="small text-muted d-flex justify-content-between">
                             <span>Then: ${past}%</span>
                             <span>Now: ${current}%</span>
-                        </div>
-                        <div class="digest-insight mt-3">
-                            ${insightText ? `<p class="mb-0 small">${insightText}</p>` : '<p class="mb-0 small text-muted">Connect an LLM to add context.</p>'}
                         </div>
                     </div>
                 </div>
@@ -994,279 +1122,6 @@ class MarketAnalyzer {
         `;
     }
 
-    async generateMoverInsights(movers) {
-        if (!movers.length) return null;
-        if (!this.llmConfig.baseUrl || !this.llmConfig.apiKey) {
-            return null;
-        }
-
-        const systemPrompt = 'You are a prediction market editor writing concise, factual newsroom summaries.';
-        const currentModel = document.getElementById('model-select')?.value;
-        const userPrompt = `
-Summarize the most important move for each market in 1-2 sentences. Explain the change using only the numbers provided.
-
-Return ONLY a raw JSON object with market ids as keys:
-{
-  "market-id": { "summary": "..." }
-}
-
-Markets:
-${JSON.stringify(movers.map(m => ({
-            id: m.id,
-            question: m.question,
-            past: Math.round(m.past * 100),
-            current: Math.round(m.current * 100),
-            delta: Math.round(m.delta)
-        })))}
-`;
-
-        try {
-            const response = await fetch(`${this.llmConfig.baseUrl}/chat/completions`, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${this.llmConfig.apiKey}`
-                },
-                body: JSON.stringify({
-                    model: currentModel || this.llmConfig.model || 'gpt-5-nano',
-                    messages: [
-                        { role: 'system', content: systemPrompt },
-                        { role: 'user', content: userPrompt }
-                    ],
-                    temperature: 0.7
-                })
-            });
-
-            if (!response.ok) {
-                return null;
-            }
-
-            const data = await response.json();
-            const content = data.choices?.[0]?.message?.content;
-            if (!content) return null;
-            return this.parseLLMResponse(content);
-        } catch (error) {
-            console.warn('Mover insight generation failed.', error);
-            return null;
-        }
-    }
-
-    async generateInsights(silentMode = false, fetchId = this.activeFetchId) {
-        const insightsContent = document.getElementById('insights-content');
-        const btn = document.getElementById('btn-generate-insights');
-        const insightsBody = insightsContent?.closest('.accordion-body');
-
-        if (!insightsContent) return;
-        if (fetchId !== this.activeFetchId || this.isFetching) return;
-
-        const insightId = ++this.activeInsightId;
-
-        // Validation: Need markets first
-        if (this.filteredMarkets.length === 0) {
-            if (!silentMode) this.showAlert('Please fetch some markets first!', 'warning');
-            return;
-        }
-
-        if (btn) {
-            btn.disabled = true;
-            btn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Analyzing...';
-        }
-
-        // Add loading effect to content area
-        insightsContent.innerHTML = `
-            <div class="row g-3">
-              ${Array(6).fill(0).map(() => `
-                <div class="col-md-6 col-lg-4 fade-in">
-                  <div class="card h-100 demo-card">
-                    <div class="card-body">
-                      <div class="d-flex justify-content-between align-items-start mb-3 placeholder-glow">
-                        <span class="placeholder col-4"></span>
-                        <span class="placeholder col-3"></span>
-                      </div>
-                      <div class="placeholder-glow mb-3">
-                        <span class="placeholder col-12"></span>
-                        <span class="placeholder col-9"></span>
-                      </div>
-                      <div class="d-flex justify-content-between align-items-center placeholder-glow">
-                        <span class="placeholder col-4"></span>
-                        <span class="placeholder col-4"></span>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              `).join('')}
-            </div>
-        `;
-
-        try {
-            const marketSummary = this.filteredMarkets.slice(0, 20).map(m => ({
-                question: m.question,
-                probability: Math.round(m.probability * 100),
-                participants: m.participants,
-                tags: m.tags,
-                source: m.source
-            }));
-
-            // Check if we have LLM config
-            if (!this.llmConfig.baseUrl || !this.llmConfig.apiKey) {
-                insightsContent.innerHTML = `
-                    <div class="alert alert-info">
-                      <i class="bi bi-info-circle me-2"></i>Configure the LLM to generate AI insights.
-                    </div>
-                `;
-                if (!silentMode) this.showAlert('Configure LLM to generate insights.', 'warning');
-                return;
-            }
-
-            let insights;
-            try {
-                insights = await this.generateLLMInsights(marketSummary);
-            } catch (error) {
-                console.warn('LLM insight generation failed:', error);
-                insightsContent.innerHTML = `
-                    <div class="alert alert-warning">
-                      <i class="bi bi-exclamation-octagon me-2"></i>LLM insights failed. Try again or adjust your model settings.
-                    </div>
-                `;
-                if (!silentMode) this.showAlert('LLM failed to generate insights.', 'warning');
-                return;
-            }
-
-            // Render Results as Cards
-            if (insightId !== this.activeInsightId || fetchId !== this.activeFetchId || this.isFetching) {
-                return;
-            }
-            if (insightsBody) {
-                if (insights.length > 6) {
-                    insightsBody.classList.add('insights-scroll');
-                } else {
-                    insightsBody.classList.remove('insights-scroll');
-                }
-            }
-            insightsContent.innerHTML = `
-                <div class="row g-3">
-                    ${insights.map(insight => `
-                    <div class="col-md-6 col-lg-4 fade-in">
-                        <div class="card h-100 bg-body-tertiary border-0 shadow-sm">
-                            <div class="card-body">
-                                <h6 class="card-title text-primary"><i class="bi bi-lightbulb-fill me-2"></i>${insight.title}</h6>
-                                <p class="card-text small">${insight.description}</p>
-                            </div>
-                        </div>
-                    </div>
-                    `).join('')}
-                </div>
-            `;
-
-            if (!silentMode) this.showAlert('Analysis Complete!', 'success');
-
-        } catch (error) {
-            if (insightId !== this.activeInsightId) {
-                return;
-            }
-            if (insightsBody) {
-                insightsBody.classList.remove('insights-scroll');
-            }
-            insightsContent.innerHTML = `
-                <div class="alert alert-warning">
-                  <i class="bi bi-exclamation-octagon me-2"></i>Could not generate insights: ${error.message}
-                </div>
-            `;
-            this.showAlert('Analysis Failed', 'danger');
-        } finally {
-            if (insightId === this.activeInsightId) {
-                if (btn) {
-                    btn.disabled = false;
-                    btn.innerHTML = '<i class="bi bi-cpu-fill me-1"></i> Re-Run Analysis';
-                }
-            }
-        }
-    }
-
-    parseLLMResponse(content) {
-        const fenced = content.match(/```json\s*([\s\S]*?)\s*```/i);
-        const arrayMatch = content.match(/\[[\s\S]*\]/);
-        const objectMatch = content.match(/\{[\s\S]*\}/);
-        const jsonStr = fenced?.[1] || arrayMatch?.[0] || objectMatch?.[0] || content;
-        return JSON.parse(jsonStr);
-    }
-
-    normalizeInsights(raw) {
-        const insightsArray = Array.isArray(raw) ? raw : raw?.insights;
-        if (!Array.isArray(insightsArray)) {
-            throw new Error('LLM returned unexpected JSON structure');
-        }
-
-        const normalized = insightsArray.map((insight, index) => ({
-            title: String(insight?.title || `Insight ${index + 1}`).trim(),
-            description: String(insight?.description || '').trim()
-        })).filter(item => item.description);
-
-        if (normalized.length === 0) {
-            throw new Error('LLM returned empty insights');
-        }
-
-        return normalized;
-    }
-
-    async generateLLMInsights(markets) {
-        const systemPrompt = document.getElementById('system-prompt')?.value || 'You are a prediction market intelligence analyst.';
-        const currentModel = document.getElementById('model-select')?.value;
-
-        const userPrompt = `
-Goal:
-Convert prediction market crowd wisdom into actionable business intelligence for a decision support system.
-Prediction markets are faster than news and provide probabilities. Use them to filter noise and surface
-context-specific, high-impact insights.
-
-What to detect:
-- Consensus signals (high confidence across related markets).
-- Divergences or contradictions (e.g., similar topics with different probabilities or sources).
-- Emerging narratives and risk monitors (what should be watched next).
-- Uncertainty hotspots (markets near 50% or low participation).
-
-Data (JSON array of markets):
-${JSON.stringify(markets)}
-
-Output format:
-- Return ONLY a raw JSON array (no markdown or prose).
-- Each item: { "title": "Short insight", "description": "2-3 sentences with actionable implication." }
-`;
-
-        const response = await fetch(`${this.llmConfig.baseUrl}/chat/completions`, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'Authorization': `Bearer ${this.llmConfig.apiKey}`
-            },
-            body: JSON.stringify({
-                model: currentModel || this.llmConfig.model || 'gpt-5-nano',
-                messages: [
-                    { role: 'system', content: systemPrompt },
-                    { role: 'user', content: userPrompt }
-                ],
-                temperature: 1
-            })
-        });
-
-        if (!response.ok) {
-            const err = await response.text();
-            throw new Error(`LLM Error: ${err}`);
-        }
-
-        const data = await response.json();
-        const content = data.choices?.[0]?.message?.content;
-
-        if (!content) throw new Error('Invalid response from LLM');
-
-        try {
-            const parsed = this.parseLLMResponse(content);
-            return this.normalizeInsights(parsed);
-        } catch (error) {
-            console.error('Failed to parse LLM Response:', content);
-            throw new Error('LLM returned invalid JSON');
-        }
-    }
 
     exportFeed() {
         const feedData = {
@@ -1298,13 +1153,6 @@ Output format:
         const loading = document.getElementById('loading');
         if (loading) {
             loading.classList.toggle('d-none', !show);
-        }
-    }
-
-    showInsightsSection(show) {
-        const section = document.getElementById('insights-section');
-        if (section) {
-            section.classList.toggle('d-none', !show);
         }
     }
 

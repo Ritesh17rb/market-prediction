@@ -139,17 +139,6 @@ const CONFIG = {
         filenamePrefix: 'prediction-feed',
     },
 
-    // Insights generation
-    insights: {
-        maxInsights: 5,
-        minMarketsForAnalysis: 5,
-        includeCategories: true,
-        includeConfidence: true,
-        includeParticipation: true,
-        includeSentiment: true,
-        includeControversial: true,
-    },
-
     // Advanced settings
     advanced: {
         debounceDelay: 500, // milliseconds for search debouncing

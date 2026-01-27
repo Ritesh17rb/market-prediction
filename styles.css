@@ -122,8 +122,40 @@ body {
 
 .sparkline {
     width: 100%;
-    height: 24px;
+    height: 40px;
     color: #0d6efd;
+}
+
+.sparkline-grid {
+    stroke: currentColor;
+    stroke-opacity: 0.15;
+    stroke-width: 0.6;
+}
+
+.sparkline-line {
+    shape-rendering: geometricPrecision;
+}
+
+.sparkline-area {
+    opacity: 0.75;
+}
+
+.sparkline-dot {
+    fill: currentColor;
+    stroke: var(--bs-body-bg);
+    stroke-width: 0.6;
+}
+
+.sparkline-up {
+    color: #16a34a;
+}
+
+.sparkline-down {
+    color: #dc2626;
+}
+
+.sparkline-neutral {
+    color: #64748b;
 }
 
 .sparkline-feed {
@@ -174,41 +206,16 @@ body {
     flex: 0 0 auto;
 }
 
-.feed-insight {
-    border-top: 1px dashed var(--bs-border-color);
-    padding-top: 0.75rem;
-    color: var(--bs-secondary-color);
+.market-meta {
+    display: grid;
+    gap: 0.35rem;
+    margin-top: 0.6rem;
 }
 
-.feed-insight-text {
-    display: block;
-    line-height: 1.4;
-    max-height: calc(1.4em * 3);
-    overflow: hidden;
-    display: -webkit-box;
-    -webkit-line-clamp: 3;
-    -webkit-box-orient: vertical;
-    overflow-wrap: anywhere;
-    word-break: break-word;
-}
-
-.digest-insight {
-    border-top: 1px dashed var(--bs-border-color);
-    padding-top: 0.75rem;
-    color: var(--bs-secondary-color);
-}
-
-.insights-scroll {
-    max-height: 560px;
-    overflow-y: auto;
-    overflow-x: hidden;
-    padding-right: 0.25rem;
-}
-
-@media (max-width: 991.98px) {
-    .insights-scroll {
-        max-height: 680px;
-    }
+.market-meta-row {
+    display: flex;
+    justify-content: space-between;
+    gap: 0.75rem;
 }
 
 /* Custom Scrollbar to match modern feel */

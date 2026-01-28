@@ -10,6 +10,7 @@ class MarketAnalyzer {
         this.fetchCounter = 0;
         this.activeFetchId = 0;
         this.isFetching = false;
+        this.hasPendingRefresh = false;
         this.snapshots = [];
         this.localSnapshotKey = 'market_snapshots_v1';
         this.lookbackDays = this.loadLookbackDays();
@@ -44,7 +45,30 @@ class MarketAnalyzer {
                 const nextValue = parseInt(lookbackSelect.value, 10);
                 this.lookbackDays = Number.isFinite(nextValue) ? nextValue : 10;
                 localStorage.setItem('lookback_days', String(this.lookbackDays));
-                this.fetchMarkets();
+                this.hasPendingRefresh = true;
+                this.updateFetchButtonState();
+            });
+
+            // Circular navigation with Arrow keys
+            lookbackSelect.addEventListener('keydown', (e) => {
+                const isArrowUp = e.key === 'ArrowUp';
+                const isArrowDown = e.key === 'ArrowDown';
+
+                if (isArrowUp || isArrowDown) {
+                    e.preventDefault();
+                    const options = lookbackSelect.options;
+                    let index = lookbackSelect.selectedIndex;
+
+                    if (isArrowDown) {
+                        index = (index + 1) % options.length;
+                    } else {
+                        index = (index - 1 + options.length) % options.length;
+                    }
+
+                    lookbackSelect.selectedIndex = index;
+                    // Connect the UI change to the logic
+                    lookbackSelect.dispatchEvent(new Event('change'));
+                }
             });
         }
 
@@ -59,6 +83,8 @@ class MarketAnalyzer {
                 }, 500);
             });
         }
+
+        this.updateFetchButtonState();
     }
 
     showAlert(message, type = 'success') {
@@ -106,7 +132,7 @@ class MarketAnalyzer {
                 <div class="card h-100 demo-card" style="cursor: pointer;" data-category="${category}">
                     <div class="card-body">
                         <h6 class="card-title">${this.getCategoryIcon(category)} ${category}</h6>
-                        <p class="card-text small text-muted">View trending prediction markets related to ${category.toLowerCase()}.</p>
+                        <p class="card-text small text-muted">View trending prediction markets related to ${category === 'AI' ? 'AI' : category.toLowerCase()}.</p>
                     </div>
                 </div>
             </div>
@@ -153,6 +179,8 @@ class MarketAnalyzer {
         const fetchId = ++this.fetchCounter;
         this.activeFetchId = fetchId;
         this.isFetching = true;
+        this.hasPendingRefresh = false;
+        this.updateFetchButtonState();
 
         // Clear State & UI
         this.currentMarkets = [];
@@ -219,13 +247,12 @@ class MarketAnalyzer {
             this.pastSnapshotDate = pastSnapshot?.date || null;
 
             this.currentMarkets = liveMarkets.map(m => this.normalizeManifoldMarket(m));
+            this.currentMarkets = await this.hydrateMissingAnswers(this.currentMarkets);
             this.filteredMarkets = [...this.currentMarkets];
 
             await this.renderCatchupDigest(currentSnapshot, pastSnapshot, query);
 
-            this.calculateStats();
-            this.displayMarkets();
-            this.displayStats();
+            this.filterMarkets(query);
             this.isFetching = false;
 
         } catch (error) {
@@ -234,6 +261,14 @@ class MarketAnalyzer {
             if (this.activeFetchId === fetchId) this.isFetching = false;
             this.showLoading(false);
         }
+    }
+
+    updateFetchButtonState() {
+        const fetchButton = document.getElementById('btn-fetch');
+        if (!fetchButton) return;
+        fetchButton.textContent = this.hasPendingRefresh ? 'Fetch update' : 'Fetch';
+        fetchButton.classList.toggle('btn-warning', this.hasPendingRefresh);
+        fetchButton.classList.toggle('btn-primary', !this.hasPendingRefresh);
     }
 
     renderMarketSkeletons(count = 6) {
@@ -619,15 +654,16 @@ class MarketAnalyzer {
     shouldFetchMarketDetails(market) {
         const needsProbability = typeof market?.probability !== 'number';
         const needsAnswers = !Array.isArray(market?.answers) || market.answers.length === 0;
-        const isMultiChoice = market?.outcomeType === 'MULTIPLE_CHOICE';
+        const outcomeType = String(market?.outcomeType || '').toUpperCase();
+        const isMultiChoice = outcomeType === 'MULTIPLE_CHOICE';
         return needsProbability || (isMultiChoice && needsAnswers);
     }
 
     async enrichMarketsWithDetails(markets) {
         const maxOtherDetailRequests = 15;
         const detailCandidates = markets.filter(market => this.shouldFetchMarketDetails(market));
-        const multiChoice = detailCandidates.filter(market => market?.outcomeType === 'MULTIPLE_CHOICE');
-        const other = detailCandidates.filter(market => market?.outcomeType !== 'MULTIPLE_CHOICE')
+        const multiChoice = detailCandidates.filter(market => String(market?.outcomeType || '').toUpperCase() === 'MULTIPLE_CHOICE');
+        const other = detailCandidates.filter(market => String(market?.outcomeType || '').toUpperCase() !== 'MULTIPLE_CHOICE')
             .slice(0, maxOtherDetailRequests);
         const detailTargets = [...multiChoice, ...other];
         if (!detailTargets.length) return markets;
@@ -735,6 +771,33 @@ class MarketAnalyzer {
         };
     }
 
+    async hydrateMissingAnswers(markets, limit = 12) {
+        const targets = markets.filter(market => {
+            const outcomeType = String(market?.outcomeType || '').toUpperCase();
+            const needsAnswers = !Array.isArray(market?.answers) || market.answers.length === 0;
+            return outcomeType === 'MULTIPLE_CHOICE' && needsAnswers;
+        }).slice(0, limit);
+        if (!targets.length) return markets;
+
+        const detailMap = new Map();
+        await Promise.all(targets.map(async market => {
+            try {
+                const response = await fetch(`https://api.manifold.markets/v0/market/${market.id}`);
+                if (!response.ok) return;
+                const detail = await response.json();
+                detailMap.set(market.id, detail);
+            } catch (error) {
+                console.warn('Failed to hydrate answers', market.id, error);
+            }
+        }));
+
+        if (!detailMap.size) return markets;
+        return markets.map(market => {
+            const detail = detailMap.get(market.id);
+            return detail ? this.normalizeManifoldMarket(detail) : market;
+        });
+    }
+
     normalizeSnapshotMarket(market) {
         return {
             id: market.id,
@@ -779,7 +842,7 @@ class MarketAnalyzer {
         const keywords = {
             'AI': ['artificial intelligence', 'machine learning', 'gpt', 'chatgpt', 'ai', 'neural', 'deep learning'],
             'Politics': ['election', 'president', 'congress', 'senate', 'political', 'vote', 'government', 'policy'],
-            'Economics': ['economy', 'inflation', 'gdp', 'stock', 'market', 'recession', 'bitcoin', 'crypto', 'finance'],
+            'Economics': ['economy', 'inflation', 'gdp', 'stock', 'recession', 'bitcoin', 'crypto', 'finance'],
             'Sports': ['nfl', 'nba', 'soccer', 'football', 'championship', 'olympics', 'baseball', 'basketball', 'tennis']
         };
 
@@ -801,6 +864,13 @@ class MarketAnalyzer {
                 market.tags.some(tag => this.selectedCategories.has(tag));
 
             return matchesSearch && matchesCategory;
+        });
+        this.filteredMarkets.sort((a, b) => {
+            const aTrend = this.getMarketTrendInfo(a.id);
+            const bTrend = this.getMarketTrendInfo(b.id);
+            const aDelta = aTrend ? Math.abs(aTrend.delta) : 0;
+            const bDelta = bTrend ? Math.abs(bTrend.delta) : 0;
+            return bDelta - aDelta;
         });
 
         this.displayMarkets();
@@ -834,19 +904,19 @@ class MarketAnalyzer {
       <div class="col-md-3">
         <div class="card h-100 text-center p-3 border-light-subtle">
           <div class="h2 mb-0 text-info">${Math.round(this.stats.avgProbability * 100)}%</div>
-          <small class="text-muted text-uppercase">Avg Probability</small>
+          <small class="text-muted text-uppercase">Average Probability</small>
         </div>
       </div>
       <div class="col-md-3">
         <div class="card h-100 text-center p-3 border-light-subtle">
           <div class="h2 mb-0 text-success">${this.stats.highConfidence}</div>
-          <small class="text-muted text-uppercase">High Confidence</small>
+          <small class="text-muted text-uppercase">High-Confidence</small>
         </div>
       </div>
       <div class="col-md-3">
         <div class="card h-100 text-center p-3 border-light-subtle">
           <div class="h2 mb-0 text-warning">${this.stats.trending}</div>
-          <small class="text-muted text-uppercase">Trending</small>
+          <small class="text-muted text-uppercase">Trending Markets</small>
         </div>
       </div>
     `;
@@ -875,11 +945,6 @@ class MarketAnalyzer {
     createMarketCard(market, index) {
         const hasProb = typeof market.probability === 'number';
         const prob = hasProb ? Math.round(market.probability * 100) : null;
-        let probBadgeClass = 'prob-mid';
-        if (hasProb && prob > 70) probBadgeClass = 'prob-high';
-        if (hasProb && prob < 30) probBadgeClass = 'prob-low';
-
-        const sourceBadge = '<span class="badge bg-primary-subtle text-primary-emphasis border border-primary-subtle">Manifold</span>';
 
         // Format Date
         const dateStr = new Date(market.createdTime).toLocaleDateString();
@@ -893,6 +958,16 @@ class MarketAnalyzer {
         const volatilityLabel = trendInfo
             ? (trendInfo.avgSwing < 2 ? 'Stable' : trendInfo.avgSwing < 6 ? 'Active' : 'Choppy')
             : null;
+        const thenProb = trendInfo ? Math.round(trendInfo.start * 100) : null;
+        const nowProb = hasProb ? prob : (trendInfo ? Math.round(trendInfo.end * 100) : null);
+        const getProbBadgeClass = (value) => {
+            if (typeof value !== 'number') return 'prob-mid';
+            if (value > 70) return 'prob-high';
+            if (value < 30) return 'prob-low';
+            return 'prob-mid';
+        };
+        const thenBadgeClass = getProbBadgeClass(thenProb);
+        const nowBadgeClass = getProbBadgeClass(nowProb);
         const statusLabel = market.isResolved ? 'resolved' : 'open';
         const closeLabel = this.formatDate(market.closeTime);
         const volumeLabel = this.formatCompactNumber(market.volume);
@@ -903,8 +978,8 @@ class MarketAnalyzer {
         <div class="card h-100 demo-card">
           <div class="card-body" data-market-id="${market.id}">
             <div class="d-flex justify-content-between align-items-start mb-2">
-              ${sourceBadge}
-              <span class="badg prob-badge ${probBadgeClass}">${hasProb ? `${prob}%` : '—'}</span>
+              <span class="prob-badge ${thenBadgeClass}">Then ${thenProb !== null ? `${thenProb}%` : '—'}</span>
+              <span class="prob-badge ${nowBadgeClass}">Now ${nowProb !== null ? `${nowProb}%` : '—'}</span>
             </div>
             
             <h6 class="card-title mb-3"><a href="${safeUrl}" target="_blank" rel="noopener" class="text-decoration-none text-reset stretched-link">${market.question}</a></h6>
@@ -921,10 +996,6 @@ class MarketAnalyzer {
                     <span class="trend-meta text-muted small">${volatilityLabel} · ${this.lookbackDays}d</span>
                 </div>
                 ${this.renderSparkline(trendInfo.series, 'sparkline-feed')}
-                <div class="small text-muted d-flex justify-content-between mt-2">
-                    <span>Then: ${Math.round(trendInfo.start * 100)}%</span>
-                    <span>Now: ${Math.round(trendInfo.end * 100)}%</span>
-                </div>
             ` : `
             <div class="d-flex justify-content-between align-items-center text-muted small">
                 <span><i class="bi bi-people me-1"></i> ${market.participants}</span>
@@ -992,8 +1063,10 @@ class MarketAnalyzer {
             return;
         }
 
-        const pastMap = new Map(pastSnapshot.markets.map(market => [market.id, market]));
-        const movers = currentSnapshot.markets.map(market => {
+        const filteredCurrentMarkets = this.filterSnapshotMarkets(currentSnapshot.markets);
+        const filteredPastMarkets = this.filterSnapshotMarkets(pastSnapshot.markets);
+        const pastMap = new Map(filteredPastMarkets.map(market => [market.id, market]));
+        const movers = filteredCurrentMarkets.map(market => {
             const past = pastMap.get(market.id);
             if (!past || typeof past.probability !== 'number' || typeof market.probability !== 'number') {
                 return null;
@@ -1030,7 +1103,7 @@ class MarketAnalyzer {
         const topMovers = moversSorted.slice(0, 6);
         const topGainers = moversSorted.filter(m => m.delta > 0).slice(0, 6);
         const topLosers = moversSorted.filter(m => m.delta < 0).slice(0, 6);
-        const currentMarketMap = new Map(currentSnapshot.markets.map(market => [market.id, market]));
+        const currentMarketMap = new Map(filteredCurrentMarkets.map(market => [market.id, market]));
         const topMoverMarkets = topMovers
             .map(mover => currentMarketMap.get(mover.id))
             .filter(Boolean);
@@ -1052,10 +1125,19 @@ class MarketAnalyzer {
         losersEl.innerHTML = this.renderMoverList(topLosers, 'Top Losers');
     }
 
+    filterSnapshotMarkets(markets) {
+        if (!Array.isArray(markets)) return [];
+        if (this.selectedCategories.size === 0) return markets;
+        return markets.filter(market => {
+            const tags = market.tags || this.extractTags(market.question || '');
+            return tags.some(tag => this.selectedCategories.has(tag));
+        });
+    }
+
     renderMoverCard(item) {
         const delta = Math.round(item.delta);
         const deltaClass = delta >= 0 ? 'delta-up' : 'delta-down';
-        const deltaLabel = delta >= 0 ? `+${delta}` : `${delta}`;
+        const deltaLabel = `${delta >= 0 ? '+' : ''}${delta} pts`;
         const current = Math.round(item.current * 100);
         const past = Math.round(item.past * 100);
         const trend = item.trend;
@@ -1066,20 +1148,17 @@ class MarketAnalyzer {
                     <div class="card-body">
                         <div class="d-flex justify-content-between align-items-start mb-2">
                             <span class="badge text-bg-light digest-badge">Biggest Mover</span>
-                            <span class="delta-pill ${deltaClass}">${deltaLabel} pts</span>
+                            <span class="delta-pill ${deltaClass}">${deltaLabel}</span>
                         </div>
                         <h6 class="card-title mb-2">
                             <a href="${item.url}" target="_blank" rel="noopener" class="text-decoration-none text-reset">${item.question}</a>
                         </h6>
+                        <div class="small text-muted mb-2">Then ${past}% → Now ${current}%</div>
                         ${trend ? `
                             <div class="digest-trend mb-2">
                                 ${this.renderSparkline(trend.series, 'sparkline-digest')}
                             </div>
                         ` : ''}
-                        <div class="small text-muted d-flex justify-content-between">
-                            <span>Then: ${past}%</span>
-                            <span>Now: ${current}%</span>
-                        </div>
                     </div>
                 </div>
             </div>
@@ -1106,13 +1185,13 @@ class MarketAnalyzer {
                         ${items.map(item => {
             const delta = Math.round(item.delta);
             const deltaClass = delta >= 0 ? 'delta-up' : 'delta-down';
-            const deltaLabel = delta >= 0 ? `+${delta}` : `${delta}`;
+            const deltaLabel = `${delta >= 0 ? '+' : ''}${delta} pts`;
             return `
                                 <li>
                                     <a href="${item.url}" target="_blank" rel="noopener" class="text-decoration-none text-reset">
                                         ${item.question}
                                     </a>
-                                    <span class="delta-pill ${deltaClass}">${deltaLabel} pts</span>
+                                    <span class="delta-pill ${deltaClass}">${deltaLabel}</span>
                                 </li>
                             `;
         }).join('')}

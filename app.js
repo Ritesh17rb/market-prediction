@@ -82,6 +82,12 @@ class MarketAnalyzer {
                     this.filterMarkets(e.target.value);
                 }, 500);
             });
+            searchInput.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter') {
+                    e.preventDefault();
+                    this.fetchMarkets();
+                }
+            });
         }
 
         this.updateFetchButtonState();
@@ -230,12 +236,20 @@ class MarketAnalyzer {
 
             let pastSnapshot = this.findClosestSnapshot(cleaned, targetTime);
             if (!pastSnapshot) {
-                pastSnapshot = await this.backfillHistory(liveMarkets, this.lookbackDays);
+                pastSnapshot = await this.backfillHistory(liveMarkets, this.lookbackDays, 4);
             }
 
-            const seriesSnapshots = await this.backfillHistorySeries(liveMarkets, this.lookbackDays, new Date(currentSnapshot.date).getTime());
-            windowSnapshots = this.mergeSnapshotArrays(seriesSnapshots, windowSnapshots)
-                .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+            if (windowSnapshots.length < 2 && this.lookbackDays > 1) {
+                const seriesSnapshots = await this.backfillHistorySeries(
+                    liveMarkets,
+                    this.lookbackDays,
+                    new Date(currentSnapshot.date).getTime(),
+                    4,
+                    2
+                );
+                windowSnapshots = this.mergeSnapshotArrays(seriesSnapshots, windowSnapshots)
+                    .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+            }
 
             if (pastSnapshot && !windowSnapshots.some(snapshot => snapshot.date === pastSnapshot.date)) {
                 windowSnapshots.unshift(pastSnapshot);
@@ -545,11 +559,11 @@ class MarketAnalyzer {
         return Math.min(Math.max(value, 0), 1);
     }
 
-    async backfillHistory(markets, days) {
+    async backfillHistory(markets, days, maxTargets = 4) {
         if (!markets.length) return null;
 
-        // Limit to top 24 active markets to avoid rate limits while getting good coverage
-        const targets = markets.slice(0, 24);
+        // Limit to a small set of active markets to minimize API load.
+        const targets = markets.slice(0, maxTargets);
         const targetTime = Date.now() - (days * 24 * 60 * 60 * 1000);
 
         const promises = targets.map(async (market) => {
@@ -575,14 +589,14 @@ class MarketAnalyzer {
         };
     }
 
-    async backfillHistorySeries(markets, days, baseTime = Date.now()) {
+    async backfillHistorySeries(markets, days, baseTime = Date.now(), maxTargets = 4, maxPoints = 2) {
         if (!markets.length) return [];
-        const targets = markets.slice(0, 24);
+        const targets = markets.slice(0, maxTargets);
         const dayMs = 24 * 60 * 60 * 1000;
         const snapshots = [];
         const lastKnown = new Map();
-
-        for (let offset = days; offset >= 1; offset -= 1) {
+        const points = Math.min(days, maxPoints);
+        for (let offset = points; offset >= 1; offset -= 1) {
             const timestamp = baseTime - (offset * dayMs);
             const results = await Promise.all(targets.map(async (market) => {
                 let prob = await this.fetchHistoricalProbability(market.id, timestamp);
@@ -609,21 +623,9 @@ class MarketAnalyzer {
 
     async fetchHistoricalProbability(marketId, timestamp) {
         try {
-            // Using correct timestamp filtering parameters: 'afterTime' and 'beforeTime'
-            // The 'before' and 'after' parameters are for Bet IDs, which caused 404s.
-            let url = `https://api.manifold.markets/v0/bets?contractId=${marketId}&afterTime=${timestamp}&limit=1&order=asc`;
-            let response = await fetch(url);
-
-            if (response.ok) {
-                const bets = await response.json();
-                if (Array.isArray(bets) && bets.length > 0) {
-                    return bets[0].probBefore;
-                }
-            }
-
-            // Fallback: Get most recent bet BEFORE timestamp
-            url = `https://api.manifold.markets/v0/bets?contractId=${marketId}&beforeTime=${timestamp}&limit=1&order=desc`;
-            response = await fetch(url);
+            // Get most recent bet BEFORE timestamp (single request to reduce API load).
+            const url = `https://api.manifold.markets/v0/bets?contractId=${marketId}&beforeTime=${timestamp}&limit=1&order=desc`;
+            const response = await fetch(url);
 
             if (response.ok) {
                 const bets = await response.json();
@@ -642,7 +644,7 @@ class MarketAnalyzer {
 
     async fetchManifoldMarkets(query) {
         const term = query || '';
-        const url = `https://api.manifold.markets/v0/search-markets?term=${encodeURIComponent(term)}&limit=50&sort=liquidity&filter=open&contractType=ALL`;
+        const url = `https://api.manifold.markets/v0/search-markets?term=${encodeURIComponent(term)}&limit=25&sort=liquidity&filter=open&contractType=ALL`;
 
         const response = await fetch(url);
         if (!response.ok) throw new Error('Failed to fetch Manifold markets');
@@ -660,12 +662,16 @@ class MarketAnalyzer {
     }
 
     async enrichMarketsWithDetails(markets) {
-        const maxOtherDetailRequests = 15;
+        const maxDetailRequests = 6;
         const detailCandidates = markets.filter(market => this.shouldFetchMarketDetails(market));
-        const multiChoice = detailCandidates.filter(market => String(market?.outcomeType || '').toUpperCase() === 'MULTIPLE_CHOICE');
-        const other = detailCandidates.filter(market => String(market?.outcomeType || '').toUpperCase() !== 'MULTIPLE_CHOICE')
-            .slice(0, maxOtherDetailRequests);
-        const detailTargets = [...multiChoice, ...other];
+        const rankedCandidates = detailCandidates
+            .slice()
+            .sort((a, b) => {
+                const aScore = a?.totalLiquidity ?? a?.liquidity ?? a?.volume ?? 0;
+                const bScore = b?.totalLiquidity ?? b?.liquidity ?? b?.volume ?? 0;
+                return bScore - aScore;
+            });
+        const detailTargets = rankedCandidates.slice(0, maxDetailRequests);
         if (!detailTargets.length) return markets;
 
         const detailMap = new Map();
@@ -771,7 +777,7 @@ class MarketAnalyzer {
         };
     }
 
-    async hydrateMissingAnswers(markets, limit = 12) {
+    async hydrateMissingAnswers(markets, limit = 4) {
         const targets = markets.filter(market => {
             const outcomeType = String(market?.outcomeType || '').toUpperCase();
             const needsAnswers = !Array.isArray(market?.answers) || market.answers.length === 0;

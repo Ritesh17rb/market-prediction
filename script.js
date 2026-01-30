@@ -858,7 +858,7 @@ class MarketAnalyzer {
   loadLookback() {
     const raw = localStorage.getItem('lookback_days');
     const parsed = parseInt(raw, 10);
-    return Number.isFinite(parsed) ? Math.min(Math.max(parsed, 1), 365) : 20;
+    return Number.isFinite(parsed) ? Math.min(Math.max(parsed, 1), 365) : 7;
   }
 
   compact(val) {

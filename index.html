@@ -7,10 +7,351 @@
   <title>Prediction Market Analyzer</title>
   <link rel="icon" type="image/svg+xml"
     href="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAzMiAzMiI+PGNpcmNsZSBjeD0iMTYiIGN5PSIxNiIgcj0iMTUiIGZpbGw9IiMyNTYzZWIiLz48cGF0aCBmaWxsPSIjZmZmIiBkPSJtMTYgNyAyIDcgNyAyLTcgMi0yIDctMi03LTctMiA3LTJaIi8+PC9zdmc+">
-
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css">
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
-  <link rel="stylesheet" href="styles.css">
+  <style>
+    body {
+      margin-bottom: 50vh;
+      font-size: 1.1875rem;
+    }
+
+    .navbar-brand {
+      font-size: 1.35rem;
+      letter-spacing: 0.02em;
+    }
+
+    .narrative {
+      max-inline-size: 40rem;
+    }
+
+    .demo-card {
+      transition: all 0.2s ease;
+      border: 1px solid var(--bs-border-color);
+    }
+
+    .demo-card:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+      border-color: var(--bs-primary);
+    }
+
+    .demo-card.border-primary {
+      border-color: var(--bs-primary) !important;
+      box-shadow: 0 0 0 0.2rem rgba(13, 110, 253, 0.25);
+    }
+
+    .demo-card.active {
+      background-color: rgba(13, 110, 253, 0.05);
+    }
+
+    .accordion-button {
+      box-shadow: none !important;
+    }
+
+    .accordion-button:not(.collapsed) {
+      background-color: rgba(13, 110, 253, 0.08);
+    }
+
+    .digest-summary {
+      border-left: 4px solid rgba(13, 110, 253, 0.35);
+      padding-left: 1rem;
+    }
+
+    .digest-kicker {
+      font-size: 0.7rem;
+      letter-spacing: 0.2em;
+      text-transform: uppercase;
+      color: var(--bs-secondary-color);
+    }
+
+    .digest-headline {
+      font-weight: 600;
+    }
+
+    .delta-pill {
+      font-size: 0.75rem;
+      font-weight: 600;
+      padding: 0.2rem 0.6rem;
+      border-radius: 999px;
+      white-space: nowrap;
+    }
+
+    .delta-up {
+      background: #d1e7dd;
+      color: #0f5132;
+    }
+
+    .delta-down {
+      background: #f8d7da;
+      color: #842029;
+    }
+
+    [data-bs-theme="dark"] .delta-up {
+      background: #051b11;
+      color: #75b798;
+    }
+
+    [data-bs-theme="dark"] .delta-down {
+      background: #2c0b0e;
+      color: #ea868f;
+    }
+
+    .digest-list li {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 1rem;
+      padding: 0.4rem 0;
+      border-bottom: 1px dashed var(--bs-border-color);
+    }
+
+    .digest-list li:last-child {
+      border-bottom: none;
+    }
+
+    .digest-list li:hover {
+      background-color: rgba(13, 110, 253, 0.05);
+      padding-left: 0.5rem;
+      margin-left: -0.5rem;
+      border-radius: 0.25rem;
+    }
+
+    .sparkline {
+      width: 100%;
+      height: 40px;
+      color: #0d6efd;
+    }
+
+    .sparkline-grid {
+      stroke: currentColor;
+      stroke-opacity: 0.15;
+      stroke-width: 0.6;
+    }
+
+    .sparkline-line {
+      shape-rendering: geometricPrecision;
+    }
+
+    .sparkline-area {
+      opacity: 0.75;
+    }
+
+    .sparkline-dot {
+      fill: currentColor;
+      stroke: var(--bs-body-bg);
+      stroke-width: 0.6;
+    }
+
+    .sparkline-up {
+      color: #16a34a;
+    }
+
+    .sparkline-down {
+      color: #dc2626;
+    }
+
+    .sparkline-neutral {
+      color: #64748b;
+    }
+
+    .answer-highlights {
+      display: grid;
+      gap: 0.35rem;
+    }
+
+    .answer-row {
+      display: flex;
+      justify-content: space-between;
+      gap: 0.75rem;
+      font-size: 0.85rem;
+      color: var(--bs-secondary-color);
+      align-items: baseline;
+      min-width: 0;
+    }
+
+    .answer-text {
+      flex: 1;
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .answer-prob {
+      font-weight: 600;
+      color: var(--bs-body-color);
+      flex: 0 0 auto;
+    }
+
+    .market-meta {
+      display: grid;
+      gap: 0.35rem;
+      margin-top: 0.6rem;
+    }
+
+    .market-meta-row {
+      display: flex;
+      justify-content: space-between;
+      gap: 0.75rem;
+    }
+
+    .prob-badge {
+      font-weight: 600;
+      padding: 0.35em 0.65em;
+      border-radius: 0.25rem;
+    }
+
+    .prob-high {
+      background-color: #d1e7dd;
+      color: #0f5132;
+    }
+
+    .prob-low {
+      background-color: #f8d7da;
+      color: #842029;
+    }
+
+    .prob-mid {
+      background-color: #cff4fc;
+      color: #055160;
+    }
+
+    [data-bs-theme="dark"] .prob-high {
+      background-color: #051b11;
+      color: #75b798;
+    }
+
+    [data-bs-theme="dark"] .prob-low {
+      background-color: #2c0b0e;
+      color: #ea868f;
+    }
+
+    [data-bs-theme="dark"] .prob-mid {
+      background-color: #032830;
+      color: #6edff6;
+    }
+
+    #catchup-gainers .digest-list-card {
+      border-left: 3px solid #198754;
+    }
+
+    #catchup-gainers .card-title {
+      color: #198754;
+      font-weight: 600;
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+
+    #catchup-gainers .card-title::before {
+      content: "📈";
+      font-size: 1.2em;
+    }
+
+    #catchup-losers .digest-list-card {
+      border-left: 3px solid #dc3545;
+    }
+
+    #catchup-losers .card-title {
+      color: #dc3545;
+      font-weight: 600;
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+
+    #catchup-losers .card-title::before {
+      content: "📉";
+      font-size: 1.2em;
+    }
+
+    [data-bs-theme="dark"] #catchup-gainers .digest-list-card {
+      background: linear-gradient(to right, rgba(25, 135, 84, 0.05) 0%, transparent 100%);
+    }
+
+    [data-bs-theme="dark"] #catchup-gainers .card-title {
+      color: #75b798;
+    }
+
+    [data-bs-theme="dark"] #catchup-losers .digest-list-card {
+      background: linear-gradient(to right, rgba(220, 53, 69, 0.05) 0%, transparent 100%);
+    }
+
+    [data-bs-theme="dark"] #catchup-losers .card-title {
+      color: #ea868f;
+    }
+
+    .custom-toast {
+      min-width: 320px;
+      padding: 16px 20px;
+      background: rgba(15, 23, 42, 0.95);
+      backdrop-filter: blur(16px);
+      border-left: 4px solid #0d6efd;
+      border-radius: 12px;
+      box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.5);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      animation: slideIn 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+      margin-bottom: 1rem;
+      color: #fff;
+    }
+
+    .custom-toast.success {
+      border-left-color: #198754;
+    }
+
+    .custom-toast.warning {
+      border-left-color: #ffc107;
+    }
+
+    .custom-toast.danger {
+      border-left-color: #dc3545;
+    }
+
+    .custom-toast .toast-content {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .custom-toast .toast-icon {
+      font-size: 1.25rem;
+    }
+
+    .custom-toast button.btn-close {
+      filter: invert(1);
+      opacity: 0.5;
+    }
+
+    @keyframes slideIn {
+      from {
+        transform: translateX(100%) scale(0.9);
+        opacity: 0;
+      }
+
+      to {
+        transform: translateX(0) scale(1);
+        opacity: 1;
+      }
+    }
+
+    .toast-exit {
+      animation: fadeOut 0.3s ease forwards;
+    }
+
+    @keyframes fadeOut {
+      from {
+        opacity: 1;
+        transform: scale(1);
+      }
+
+      to {
+        opacity: 0;
+        transform: scale(0.95);
+      }
+    }
+  </style>
 </head>
 
 <body>
@@ -22,18 +363,18 @@
       </button>
       <div class="collapse navbar-collapse" id="navbarSupportedContent">
         <ul class="navbar-nav me-auto"></ul>
-        <div class="nav-item dropdown" role="group">
+        <div class="nav-item dropdown">
           <button class="dark-theme-toggle btn btn-outline-light dropdown-toggle" type="button"
-            data-bs-toggle="dropdown">
+            data-bs-toggle="dropdown" aria-label="Toggle theme (dark)">
             <i class="bi bi-circle-half"></i> <span class="d-lg-none ms-2">Toggle theme</span>
           </button>
           <ul class="dropdown-menu dropdown-menu-end">
-            <li><button class="dropdown-item" data-bs-theme-value="light"><i class="me-2 bi bi-sun-fill"></i>
-                Light</button></li>
-            <li><button class="dropdown-item active" data-bs-theme-value="dark"><i
+            <li><button class="dropdown-item" data-bs-theme-value="light" aria-pressed="false"><i
+                  class="me-2 bi bi-sun-fill"></i> Light</button></li>
+            <li><button class="dropdown-item active" data-bs-theme-value="dark" aria-pressed="true"><i
                   class="me-2 bi bi-moon-stars-fill"></i> Dark</button></li>
-            <li><button class="dropdown-item" data-bs-theme-value="auto"><i class="me-2 bi bi-circle-half"></i>
-                Auto</button></li>
+            <li><button class="dropdown-item" data-bs-theme-value="auto" aria-pressed="false"><i
+                  class="me-2 bi bi-circle-half"></i> Auto</button></li>
           </ul>
         </div>
       </div>
@@ -42,6 +383,7 @@
 
   <div class="container mt-4">
     <div id="alert-container" class="position-fixed top-0 end-0 p-3" style="z-index: 1050;"></div>
+
     <h1 class="display-1 my-4 text-center">MarketAnalyzer</h1>
     <h2 class="display-6 text-center">Analyze <em>prediction markets</em> with live data</h2>
     <div class="mx-auto my-3 narrative">
@@ -53,21 +395,17 @@
       </ul>
     </div>
 
-    <!-- Category Templates -->
     <div class="my-4">
       <h3 class="h5 mb-3 text-center">Popular Categories</h3>
-      <div id="category-filters" class="row g-3">
-        <!-- Will be populated by JS -->
-      </div>
+      <div id="category-filters" class="row g-3"></div>
     </div>
 
-    <!-- Main Control Panel -->
     <div class="card mb-4">
       <div class="card-body">
         <div class="row g-3 align-items-end">
           <div class="col-md-3">
-            <select class="form-select" id="lookback-period" aria-label="Lookback period">
-              <option value="1" selected>Yesterday</option>
+            <select class="form-select" id="lookback-period">
+              <option value="1">Yesterday</option>
               <option value="7">Weekly</option>
               <option value="14">Two Weeks</option>
               <option value="30">Monthly</option>
@@ -77,7 +415,7 @@
           </div>
           <div class="col-md-7">
             <input type="text" class="form-control" id="query-input"
-              placeholder="Search markets (e.g., 'nuclear energy')..." aria-label="Search markets">
+              placeholder="Search markets (e.g., 'nuclear energy')...">
           </div>
           <div class="col-md-2">
             <button id="btn-fetch" class="btn btn-primary w-100">Fetch</button>
@@ -86,72 +424,53 @@
       </div>
     </div>
 
-    <!-- Stats Row -->
-    <div id="stats-container" class="row g-3 mb-4">
-      <!-- Populated by JS -->
-    </div>
+    <div id="stats-container" class="row g-3 mb-4"></div>
 
-    <!-- Market Movers Section -->
     <div id="market-movers" class="mb-4 d-none">
       <div class="card">
         <div class="card-body">
-          <div id="catchup-summary">
-            <!-- Summary will be populated by JS -->
-          </div>
-          <div id="catchup-range" class="text-muted small mb-3">
-            <!-- Date range will be populated by JS -->
-          </div>
-
-          <!-- Biggest Movers Grid -->
-          <div id="catchup-movers" class="row g-3 mb-4">
-            <!-- Biggest movers cards will be populated by JS -->
-          </div>
-
-          <!-- Top Gainers and Top Losers Side by Side -->
+          <div id="catchup-summary"></div>
+          <div id="catchup-range" class="text-muted small mb-3"></div>
+          <div id="catchup-movers" class="row g-3 mb-4"></div>
           <div class="row g-3">
             <div class="col-md-6">
-              <div id="catchup-gainers">
-                <!-- Top gainers list will be populated by JS -->
-              </div>
+              <div id="catchup-gainers"></div>
             </div>
             <div class="col-md-6">
-              <div id="catchup-losers">
-                <!-- Top losers list will be populated by JS -->
-              </div>
+              <div id="catchup-losers"></div>
             </div>
           </div>
         </div>
       </div>
     </div>
 
-    <!-- Market Feed -->
     <div id="market-feed" class="mb-4">
-      <div class="accordion" id="market-feed-accordion">
+      <div class="accordion">
         <div class="accordion-item">
-          <h2 class="accordion-header" id="market-feed-heading">
+          <h2 class="accordion-header">
             <button class="accordion-button" type="button" data-bs-toggle="collapse"
-              data-bs-target="#market-feed-collapse" aria-expanded="true" aria-controls="market-feed-collapse">
+              data-bs-target="#market-feed-collapse">
               <i class="bi bi-list-stars me-2"></i>Market Feed
             </button>
           </h2>
-          <div id="market-feed-collapse" class="accordion-collapse collapse show"
-            data-bs-parent="#market-feed-accordion">
+          <div id="market-feed-collapse" class="accordion-collapse collapse show">
             <div class="accordion-body">
-              <div id="markets-container" class="row g-3">
-                <!-- Market Cards -->
+              <div id="markets-container" class="row g-3"></div>
+              <div id="load-more-container" class="d-flex justify-content-center mt-4 d-none">
+                <button id="btn-load-more" class="btn btn-outline-primary btn-lg">Load more</button>
               </div>
             </div>
           </div>
         </div>
       </div>
     </div>
-
   </div>
 
   <script src="https://cdn.jsdelivr.net/npm/@gramex/ui@0.3.1/dist/dark-theme.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
-  <script src="config.js"></script>
-  <script src="app.js"></script>
+  <script src="script.js"></script>
+
+
 </body>
 
 </html>
